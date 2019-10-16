@@ -12,6 +12,7 @@ import copy
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
 
@@ -147,8 +148,8 @@ def pretrain(split,
     meters = {m: util.AverageMeter() for m in measures}
 
     with context:
-        for batch_i, (img, y, lang) in enumerate(dataloader):
-            y_onehot = y.argmax(1)
+        for batch_i, (img, y_onehot, lang) in enumerate(dataloader):
+            y = y_onehot.argmax(1)
             batch_size = img.shape[0]
             
             # Convert to float
@@ -158,27 +159,22 @@ def pretrain(split,
             if training:
                 optimizer.zero_grad()
             
-            lang_temp = torch.zeros([lang.shape[0],max_len,4+len(VOCAB)])
-            lang_length = torch.zeros([lang.shape[0]])
-            for s in range(len(lang)):
-                for w in range(len(lang[s])):
-                    v = lang[s][w]
-                    lang_temp[s][w][v] = 1
-                    lang_length[s] += 1
-            lang = lang_temp
+            lang_length = torch.tensor([np.count_nonzero(t) for t in lang], dtype=np.int)
+            lang = F.one_hot(lang, num_classes=4 + len(VOCAB))
+            lang = F.pad(lang,(0,0,0,max_len-lang.shape[1])).float()
             
             if args.cuda:
                 img = img.cuda()
-                y_onehot = y_onehot.cuda()
+                y = y.cuda()
                 lang = lang.cuda()
                 lang_length = lang_length.cuda()
 
             lis_scores = listener(img, lang, lang_length)
 
             # Evaluate loss and accuracy
-            this_loss = loss(lis_scores, y_onehot)
+            this_loss = loss(lis_scores, y)
             lis_pred = lis_scores.argmax(1)
-            this_acc = (lis_pred == y_onehot).float().mean().item()
+            this_acc = (lis_pred == y).float().mean().item()
 
             if training:
                 # SGD step
@@ -187,7 +183,7 @@ def pretrain(split,
             
             meters['loss'].update(this_loss, batch_size)
             meters['acc'].update(this_acc, batch_size)
-    
+
     metrics = compute_average_metrics(meters)
     return metrics
 
@@ -254,7 +250,7 @@ def run(split,
     with context:
         for batch_i, (img, y, lang) in enumerate(dataloader):
             if game == 'reference':
-                y = y.argmax(1) # onehot
+                y = y.argmax(1) # convert from onehot
             batch_size = img.shape[0]
 
             # Convert to float
@@ -362,6 +358,15 @@ if __name__ == '__main__':
     else:
         speaker_embs = nn.Embedding(4 + len(VOCAB), 50)
         listener_embs = nn.Embedding(4 + len(VOCAB), 50)
+    langs = np.array([])
+    if args.pretrain:
+        for file in args.pretrain_data_file:
+            d = data.load_raw_data(file)
+            langs = np.append(langs, d['langs'])
+    for file in args.data_file:
+        d = data.load_raw_data(file)
+        langs = np.append(langs, d['langs'])
+    vocab = data.init_vocab(langs)
 
     # Model
     speaker_vision = vision.Conv4()
@@ -385,37 +390,31 @@ if __name__ == '__main__':
     # Pretrain
     if args.pretrain:
         for epoch in range(args.epochs):
-            for file in args.pretrain_data_file:
-                # Data
+            train_metrics = defaultdict(list)
+            train_metrics['loss'] = []
+            train_metrics['acc'] = []
+            val_metrics = defaultdict(list)
+            val_metrics['loss'] = []
+            val_metrics['acc'] = []
+            for file in args.pretrain_data_file[0:len(args.pretrain_data_file)-1]:
                 d = data.load_raw_data(file)
-                vocab = data.init_vocab(d['langs'])
-                train, val, test = data.train_val_test_split(d)
-                dataloaders = {
-                    'train': DataLoader(ShapeWorld(train, vocab), batch_size=args.batch_size, 
-                                        shuffle=True, num_workers=args.n_workers),
-                    'val': DataLoader(ShapeWorld(val, vocab), batch_size=args.batch_size, shuffle=True,
-                                    num_workers=args.n_workers),
-                    'test': DataLoader(ShapeWorld(test, vocab), batch_size=args.batch_size, shuffle=True, 
-                                    num_workers=args.n_workers)
-                }
+                dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
                 run_args = (listener, optimizer, loss, dataloaders)
-                train_metrics = pretrain('train', epoch, *run_args)
-            for file in args.data_file:
-                # Data
+                temp_metrics = pretrain('train', epoch, *run_args)
+                train_metrics['loss'].append(temp_metrics['loss'])
+                train_metrics['acc'].append(temp_metrics['acc'])
+            for file in [args.pretrain_data_file[-1]]:
                 d = data.load_raw_data(file)
-                vocab = data.init_vocab(d['langs'])
-                train, val, test = data.train_val_test_split(d)
-                dataloaders = {
-                    'train': DataLoader(ShapeWorld(train, vocab), batch_size=args.batch_size, 
-                                        shuffle=True, num_workers=args.n_workers),
-                    'val': DataLoader(ShapeWorld(val, vocab), batch_size=args.batch_size, shuffle=True,
-                                    num_workers=args.n_workers),
-                    'test': DataLoader(ShapeWorld(test, vocab), batch_size=args.batch_size, shuffle=True, 
-                                    num_workers=args.n_workers)
-                }
+                dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
                 run_args = (listener, optimizer, loss, dataloaders)
-                val_metrics = pretrain('val', epoch, *run_args)
-
+                temp_metrics = pretrain('val', epoch, *run_args)
+                val_metrics['loss'].append(temp_metrics['loss'])
+                val_metrics['acc'].append(temp_metrics['acc'])
+            train_metrics['loss'] = np.mean(train_metrics['loss'])
+            train_metrics['acc'] = np.mean(train_metrics['acc'])
+            val_metrics['loss'] = np.mean(val_metrics['loss'])
+            val_metrics['acc'] = np.mean(val_metrics['acc'])
+            
             # Update your metrics, prepending the split name.
             for metric, value in train_metrics.items():
                 metrics['train_{}'.format(metric)].append(value)
@@ -432,48 +431,35 @@ if __name__ == '__main__':
                 metrics['best_epoch'] = epoch
                 best_listener = copy.deepcopy(listener)
             print('Epoch '+str(epoch))
-            print(val_metrics['acc'])
-            """for param in listener.parameters():
-                try:
-                    print(param[0][0])
-                except:
-                    print('exception')
-                    print(param)
-                continue"""
         listener = best_listener
         torch.save(listener, 'pretrained_listener.pt')
         print(metrics)
     
     for epoch in range(args.epochs):
+        train_metrics = defaultdict(list)
+        train_metrics['loss'] = []
+        train_metrics['acc'] = []
+        val_metrics = defaultdict(list)
+        val_metrics['loss'] = []
+        val_metrics['acc'] = []
         for file in args.data_file:
             d = data.load_raw_data(file)
-            vocab = data.init_vocab(d['langs'])
-            train, val, test = data.train_val_test_split(d)
-            dataloaders = {
-                'train': DataLoader(ShapeWorld(train, vocab), batch_size=args.batch_size, 
-                                    shuffle=True, num_workers=args.n_workers),
-                'val': DataLoader(ShapeWorld(val, vocab), batch_size=args.batch_size, shuffle=True,
-                                  num_workers=args.n_workers),
-                'test': DataLoader(ShapeWorld(test, vocab), batch_size=args.batch_size, shuffle=True, 
-                                   num_workers=args.n_workers)
-            }
+            dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
             run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game)
-            train_metrics = run('train', epoch, *run_args)
-        for file in args.data_file:
-            # Data
+            temp_metrics = run('train', epoch, *run_args)
+            train_metrics['loss'].append(temp_metrics['loss'])
+            train_metrics['acc'].append(temp_metrics['acc'])
+        for file in [args.data_file[-1]]:
             d = data.load_raw_data(file)
-            vocab = data.init_vocab(d['langs'])
-            train, val, test = data.train_val_test_split(d)
-            dataloaders = {
-                'train': DataLoader(ShapeWorld(train, vocab), batch_size=args.batch_size, 
-                                    shuffle=True, num_workers=args.n_workers),
-                'val': DataLoader(ShapeWorld(val, vocab), batch_size=args.batch_size, shuffle=True,
-                                  num_workers=args.n_workers),
-                'test': DataLoader(ShapeWorld(test, vocab), batch_size=args.batch_size, shuffle=True, 
-                                   num_workers=args.n_workers)
-            }
+            dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True,num_workers=args.n_workers)}
             run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game)
-            val_metrics = run('val', epoch, *run_args)
+            temp_metrics = run('val', epoch, *run_args)
+            val_metrics['loss'].append(temp_metrics['loss'])
+            val_metrics['acc'].append(temp_metrics['acc'])
+        train_metrics['loss'] = np.mean(train_metrics['loss'])
+        train_metrics['acc'] = np.mean(train_metrics['acc'])
+        val_metrics['loss'] = np.mean(val_metrics['loss'])
+        val_metrics['acc'] = np.mean(val_metrics['acc'])
 
         # Update your metrics, prepending the split name.
         for metric, value in train_metrics.items():
