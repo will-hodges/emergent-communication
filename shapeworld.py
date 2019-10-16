@@ -687,7 +687,7 @@ if __name__ == '__main__':
         help='If specified, save sample visualization of data (100 images) to this folder'
     )
     parser.add_argument(
-        '--out', default='../data/simple/reference-5000.npz',
+        '--out', default='../data/single/reference-1000-10.npz',
         help='Save dataset to this file'
     )
 
