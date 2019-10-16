@@ -218,7 +218,6 @@ class Listener(nn.Module):
         self.feat_model = feat_model
         self.feat_size = feat_model.final_feat_dim
         self.vocab_size = embedding_module.num_embeddings
-
         self.bilinear = nn.Linear(self.lang_model.hidden_size, self.feat_size, bias=False)
 
     def embed_features(self, feats):
@@ -227,9 +226,7 @@ class Listener(nn.Module):
         rest = feats.shape[2:]
         feats_flat = feats.reshape(batch_size * n_obj, *rest)
         feats_emb_flat = self.feat_model(feats_flat)
-
         feats_emb = feats_emb_flat.unsqueeze(1).view(batch_size, n_obj, -1)
-
         return feats_emb
 
     def forward(self, feats, lang, lang_length):
