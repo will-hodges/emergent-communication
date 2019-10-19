@@ -9,6 +9,7 @@ import random
 from collections import defaultdict
 import copy
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -195,7 +196,8 @@ def run(split,
         loss,
         dataloaders,
         pretrain,
-        game,
+        game_type,
+        num_samples=0,
         random_state=None):
     """
     Run the model for a single epoch.
@@ -247,9 +249,11 @@ def run(split,
     measures = ['loss', 'acc']
     meters = {m: util.AverageMeter() for m in measures}
 
+    sample_index = np.random.randint(0,len(dataloader),int(num_samples))
     with context:
+        outputs = []
         for batch_i, (img, y, lang) in enumerate(dataloader):
-            if game == 'reference':
+            if game_type == 'reference':
                 y = y.argmax(1) # convert from onehot
             batch_size = img.shape[0]
 
@@ -266,13 +270,14 @@ def run(split,
             # Forward pass
             lang, lang_length = speaker(img, y)
 
-            if game == 'reference':
+            if game_type == 'reference':
                 lis_scores = listener(img, lang, lang_length)
                 
                 # Evaluate loss and accuracy
                 this_loss = loss(lis_scores, y.long())
                 lis_pred = lis_scores.argmax(1)
-                this_acc = (lis_pred == y).float().mean().item()
+                correct = (lis_pred == y)
+                this_acc = correct.float().mean().item()
                 
                 if training:
                     # SGD step
@@ -281,30 +286,39 @@ def run(split,
 
                 meters['loss'].update(this_loss, batch_size)
                 meters['acc'].update(this_acc, batch_size)
-            
-            if game == 'concept':
-                games_per_batch = 10
+                
+                if batch_i in sample_index:
+                    outputs.append([correct, 
+                                    np.array(dataloader.dataset.to_text(lang.argmax(2))), 
+                                    (img - torch.min(img))/(torch.max(img)-torch.min(img))])
+            if game_type == 'concept':
+                games_per_batch = 5
                 sampled_img, sampled_y = sample_ref_game(img, y, games_per_batch = games_per_batch)
+                output = []
                 for game in range(games_per_batch):
                     lis_scores = listener(torch.squeeze(sampled_img[:,game]), lang, lang_length)
-
                     # Evaluate loss and accuracy
                     y = torch.squeeze(sampled_y[:,game]).argmax(1)
                     this_loss = loss(lis_scores, y)
                     lis_pred = lis_scores.argmax(1)
-                    this_acc = (lis_pred == y).float().mean().item()
-                    
+                    correct = (lis_pred == y)
+                    this_acc = correct.float().mean().item()
                     if training:
                         # SGD step
                         this_loss.backward(retain_graph=True)
                         optimizer.step()
-
                     meters['loss'].update(this_loss, batch_size)
-                    meters['acc'].update(this_acc, batch_size)
-
+                    meters['acc'].update(this_acc, batch_size)   
+                    
+                    if batch_i in sample_index:
+                        output.append([correct, 
+                                       np.array(dataloader.dataset.to_text(lang.argmax(2))), 
+                                       (torch.squeeze(sampled_img[:,game]) - torch.min(torch.squeeze(sampled_img[:,game])))/(torch.max(torch.squeeze(sampled_img[:,game]))-torch.min(torch.squeeze(sampled_img[:,game])))])
+                if batch_i in sample_index:
+                    outputs.append(output)
+                    
     metrics = compute_average_metrics(meters)
-    lang_onehot = lang.argmax(2)
-    return metrics
+    return metrics, np.array(outputs)
 
 
 if __name__ == '__main__':
@@ -317,7 +331,8 @@ if __name__ == '__main__':
     parser.add_argument('--data_file', default=None, type=str)
     parser.add_argument('--pretrain_data_file', default=None, type=str)
     parser.add_argument('--pretrain', action='store_true')
-    parser.add_argument('--game', choices=['concept', 'reference'], default='reference', type=str)
+    parser.add_argument('--new', action='store_true')
+    parser.add_argument('--game_type', choices=['concept', 'reference'], default='reference', type=str)
     parser.add_argument('--data_type', choices=['single', 'spatial'], default='single', type=str)
     parser.add_argument('--stim_dim', default=16, type=int)
     parser.add_argument('--stim_rep_dim', default=16, type=int)
@@ -339,19 +354,18 @@ if __name__ == '__main__':
         if args.data_type == 'spatial':
             args.pretrain_data_file = ['../data/spatial/reference-1000-6.npz','../data/spatial/reference-1000-7.npz','../data/spatial/reference-1000-8.npz','../data/spatial/reference-1000-9.npz','../data/spatial/reference-1000-10.npz']
     if args.data_file == None:
-        if args.game == 'reference':
+        if args.game_type == 'reference':
             if args.data_type == 'single':
                 args.data_file = ['../data/single/reference-1000-1.npz','../data/single/reference-1000-2.npz','../data/single/reference-1000-3.npz','../data/single/reference-1000-4.npz','../data/single/reference-1000-5.npz']
             if args.data_type == 'spatial':
                 args.data_file = ['../data/spatial/reference-1000-1.npz','../data/spatial/reference-1000-2.npz','../data/spatial/reference-1000-3.npz','../data/spatial/reference-1000-4.npz','../data/spatial/reference-1000-5.npz']
-        if args.game == 'concept':
+        if args.game_type == 'concept':
             if args.data_type == 'single':
-                args.data_file = ['../data/single/concept-1000-1.npz','../data/single/concept-1000-2.npz','../data/single/concept-1000-3.npz','../data/single/concept-1000-4.npz','../data/single/concept-1000-5.npz']
+                args.data_file = ['../data/single/concept-100-1.npz','../data/single/concept-100-2.npz','../data/single/concept-100-3.npz','../data/single/concept-100-4.npz','../data/single/concept-100-5.npz','../data/single/concept-100-6.npz','../data/single/concept-100-7.npz','../data/single/concept-100-8.npz','../data/single/concept-100-9.npz','../data/single/concept-100-10.npz','../data/single/concept-100-11.npz','../data/single/concept-100-12.npz','../data/single/concept-100-13.npz','../data/single/concept-100-14.npz','../data/single/concept-100-15.npz','../data/single/concept-100-16.npz','../data/single/concept-100-17.npz','../data/single/concept-100-18.npz','../data/single/concept-100-19.npz','../data/single/concept-100-20.npz','../data/single/concept-100-21.npz','../data/single/concept-100-22.npz','../data/single/concept-100-23.npz','../data/single/concept-100-24.npz','../data/single/concept-100-25.npz','../data/single/concept-100-26.npz','../data/single/concept-100-27.npz','../data/single/concept-100-28.npz','../data/single/concept-100-29.npz','../data/single/concept-100-30.npz','../data/single/concept-100-31.npz','../data/single/concept-100-32.npz','../data/single/concept-100-33.npz','../data/single/concept-100-34.npz','../data/single/concept-100-35.npz','../data/single/concept-100-36.npz','../data/single/concept-100-37.npz','../data/single/concept-100-38.npz','../data/single/concept-100-39.npz','../data/single/concept-100-40.npz','../data/single/concept-100-41.npz','../data/single/concept-100-42.npz','../data/single/concept-100-43.npz','../data/single/concept-100-44.npz','../data/single/concept-100-45.npz','../data/single/concept-100-46.npz','../data/single/concept-100-47.npz','../data/single/concept-100-48.npz','../data/single/concept-100-49.npz','../data/single/concept-100-50.npz']
             if args.data_type == 'spatial':
                 args.data_file = ['../data/spatial/concept-1000-1.npz','../data/spatial/concept-1000-2.npz','../data/spatial/concept-1000-3.npz','../data/spatial/concept-1000-4.npz','../data/spatial/concept-1000-5.npz']
 
     # Vocab
-    # sos, eos, pad + n_vocab
     if args.vocab_size is not None:
         speaker_embs = nn.Embedding(4 + args.vocab_size, 50)
         listener_embs = nn.Embedding(4 + args.vocab_size, 50)
@@ -370,7 +384,7 @@ if __name__ == '__main__':
 
     # Model
     speaker_vision = vision.Conv4()
-    speaker = models.Speaker(speaker_vision, speaker_embs, args.game)
+    speaker = models.Speaker(speaker_vision, speaker_embs, args.game_type)
     listener_vision = vision.Conv4()
     listener = models.Listener(listener_vision, listener_embs)
 
@@ -389,52 +403,56 @@ if __name__ == '__main__':
 
     # Pretrain
     if args.pretrain:
-        for epoch in range(args.epochs):
-            train_metrics = defaultdict(list)
-            train_metrics['loss'] = []
-            train_metrics['acc'] = []
-            val_metrics = defaultdict(list)
-            val_metrics['loss'] = []
-            val_metrics['acc'] = []
-            for file in args.pretrain_data_file[0:len(args.pretrain_data_file)-1]:
-                d = data.load_raw_data(file)
-                dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
-                run_args = (listener, optimizer, loss, dataloaders)
-                temp_metrics = pretrain('train', epoch, *run_args)
-                train_metrics['loss'].append(temp_metrics['loss'])
-                train_metrics['acc'].append(temp_metrics['acc'])
-            for file in [args.pretrain_data_file[-1]]:
-                d = data.load_raw_data(file)
-                dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
-                run_args = (listener, optimizer, loss, dataloaders)
-                temp_metrics = pretrain('val', epoch, *run_args)
-                val_metrics['loss'].append(temp_metrics['loss'])
-                val_metrics['acc'].append(temp_metrics['acc'])
-            train_metrics['loss'] = np.mean(train_metrics['loss'])
-            train_metrics['acc'] = np.mean(train_metrics['acc'])
-            val_metrics['loss'] = np.mean(val_metrics['loss'])
-            val_metrics['acc'] = np.mean(val_metrics['acc'])
-            
-            # Update your metrics, prepending the split name.
-            for metric, value in train_metrics.items():
-                metrics['train_{}'.format(metric)].append(value)
-            for metric, value in val_metrics.items():
-                metrics['val_{}'.format(metric)].append(value)
-            metrics['current_epoch'] = epoch
+        if args.new:
+            for epoch in range(args.epochs):
+                train_metrics = defaultdict(list)
+                train_metrics['loss'] = []
+                train_metrics['acc'] = []
+                val_metrics = defaultdict(list)
+                val_metrics['loss'] = []
+                val_metrics['acc'] = []
+                for file in args.pretrain_data_file[0:len(args.pretrain_data_file)-1]:
+                    d = data.load_raw_data(file)
+                    dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
+                    run_args = (listener, optimizer, loss, dataloaders)
+                    temp_metrics = pretrain('train', epoch, *run_args)
+                    train_metrics['loss'].append(temp_metrics['loss'])
+                    train_metrics['acc'].append(temp_metrics['acc'])
+                for file in [args.pretrain_data_file[-1]]:
+                    d = data.load_raw_data(file)
+                    dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
+                    run_args = (listener, optimizer, loss, dataloaders)
+                    temp_metrics = pretrain('val', epoch, *run_args)
+                    val_metrics['loss'].append(temp_metrics['loss'])
+                    val_metrics['acc'].append(temp_metrics['acc'])
+                train_metrics['loss'] = np.mean(train_metrics['loss'])
+                train_metrics['acc'] = np.mean(train_metrics['acc'])
+                val_metrics['loss'] = np.mean(val_metrics['loss'])
+                val_metrics['acc'] = np.mean(val_metrics['acc'])
 
-            # Use validation accuracy to choose the best model. If it's the best,
-            # update the best metrics.
-            is_best = val_metrics['acc'] > metrics['best_acc']
-            if is_best:
-                metrics['best_acc'] = val_metrics['acc']
-                metrics['best_loss'] = val_metrics['loss']
-                metrics['best_epoch'] = epoch
-                best_listener = copy.deepcopy(listener)
-            print('Epoch '+str(epoch))
-        listener = best_listener
-        torch.save(listener, 'pretrained_listener.pt')
-        print(metrics)
-    
+                # Update your metrics, prepending the split name.
+                for metric, value in train_metrics.items():
+                    metrics['train_{}'.format(metric)].append(value)
+                for metric, value in val_metrics.items():
+                    metrics['val_{}'.format(metric)].append(value)
+                metrics['current_epoch'] = epoch
+
+                # Use validation accuracy to choose the best model. If it's the best,
+                # update the best metrics.
+                is_best = val_metrics['acc'] > metrics['best_acc']
+                if is_best:
+                    metrics['best_acc'] = val_metrics['acc']
+                    metrics['best_loss'] = val_metrics['loss']
+                    metrics['best_epoch'] = epoch
+                    best_listener = copy.deepcopy(listener)
+                print('Epoch '+str(epoch))
+            listener = best_listener
+            torch.save(listener, 'pretrained_listener.pt')
+            torch.save(vocab, 'vocab.pt')
+            print(metrics)
+        else:
+            listener = torch.load('pretrained_listener.pt')
+            vocab = torch.load('vocab.pt')
     for epoch in range(args.epochs):
         train_metrics = defaultdict(list)
         train_metrics['loss'] = []
@@ -442,20 +460,108 @@ if __name__ == '__main__':
         val_metrics = defaultdict(list)
         val_metrics['loss'] = []
         val_metrics['acc'] = []
-        for file in args.data_file:
+        sample_index = np.random.randint(0,len(args.data_file)-1,3)
+        sample_file = [args.data_file[index] for index in sample_index]
+        outputs = []
+        for file in args.data_file[0:len(args.data_file)-1]:
             d = data.load_raw_data(file)
             dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
-            run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game)
-            temp_metrics = run('train', epoch, *run_args)
+            run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game_type)
+            if epoch == args.epochs-1 and file in sample_file:
+                temp_metrics, output = run('train', epoch, *run_args, 1)
+                outputs.append(output)
+            else:
+                temp_metrics, output = run('train', epoch, *run_args)
             train_metrics['loss'].append(temp_metrics['loss'])
             train_metrics['acc'].append(temp_metrics['acc'])
+        if epoch == args.epochs-1:
+            if args.game_type == 'concept':
+                outputs = np.array(outputs)
+                outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2],outputs.shape[3])
+                for output_index, output in enumerate(outputs):
+                    for game_index, game in enumerate(output):
+                        if args.pretrain:
+                            np.savetxt('../output/pretrain_concept/train/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
+                            np.savetxt('../output/pretrain_concept/train/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
+                            for batch_index, batch in enumerate(game[2]):
+                                plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                        else:
+                            np.savetxt('../output/concept/train/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
+                            np.savetxt('../output/concept/train/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
+                            for batch_index, batch in enumerate(game[2]):
+                                plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+            else:
+                outputs = np.array(outputs)
+                outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2])
+                for output_index, output in enumerate(outputs):
+                    if args.pretrain:
+                        np.savetxt('../output/pretrain_reference/train/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                        np.savetxt('../output/pretrain_reference/train/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                        for batch_index, batch in enumerate(output[2]):
+                                plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                    else:
+                        np.savetxt('../output/reference/train/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                        np.savetxt('../output/reference/train/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                        for batch_index, batch in enumerate(output[2]):
+                            plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                            plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                            plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+        outputs = []
         for file in [args.data_file[-1]]:
             d = data.load_raw_data(file)
             dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True,num_workers=args.n_workers)}
-            run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game)
-            temp_metrics = run('val', epoch, *run_args)
+            run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game_type)
+            if epoch == args.epochs-1:
+                temp_metrics, output = run('val', epoch, *run_args, 1)
+                outputs.append(output)
+            else:
+                temp_metrics, output = run('val', epoch, *run_args)
             val_metrics['loss'].append(temp_metrics['loss'])
             val_metrics['acc'].append(temp_metrics['acc'])
+        if epoch == args.epochs-1:
+            if args.game_type == 'concept':
+                outputs = np.array(outputs)
+                outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2],outputs.shape[3])
+                for output_index, output in enumerate(outputs):
+                    for game_index, game in enumerate(output):
+                        if args.pretrain:
+                            np.savetxt('../output/pretrain_concept/val/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
+                            np.savetxt('../output/pretrain_concept/val/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
+                            for batch in game[2]:
+                                plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                        else:
+                            np.savetxt('../output/concept/val/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
+                            np.savetxt('../output/concept/val/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
+                            for batch in game[2]:
+                                plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+            else:
+                outputs = np.array(outputs)
+                outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2])
+                for output_index, output in enumerate(outputs):
+                    if args.pretrain:
+                        np.savetxt('../output/pretrain_reference/val/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                        np.savetxt('../output/pretrain_reference/val/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                        for batch_index, batch in enumerate(output[2]):
+                                plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                    else:
+                        np.savetxt('../output/reference/val/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                        np.savetxt('../output/reference/val/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                        for batch_index, batch in enumerate(output[2]):
+                                plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
         train_metrics['loss'] = np.mean(train_metrics['loss'])
         train_metrics['acc'] = np.mean(train_metrics['acc'])
         val_metrics['loss'] = np.mean(val_metrics['loss'])
@@ -478,4 +584,6 @@ if __name__ == '__main__':
             best_speaker = copy.deepcopy(speaker)
             best_listener = copy.deepcopy(listener)
         print('Epoch '+str(epoch))
+        print(train_metrics['acc'])
+        print(val_metrics['acc'])
     print(metrics)
