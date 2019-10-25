@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import torch.nn.utils.rnn as rnn_utils
 import data
+from train import VOCAB
 
 
 class FeatureMLP(nn.Module):
@@ -51,7 +52,6 @@ class Speaker(nn.Module):
         if game == 'concept':
             self.init_h = nn.Linear(10 * (self.feat_size + 1), self.hidden_size)
 
-
     def embed_features(self, feats, targets):
         batch_size = feats.shape[0]
         n_obj = feats.shape[1]
@@ -85,7 +85,7 @@ class Speaker(nn.Module):
 
         # This contains are series of sampled onehot vectors
         lang = []
-        # And verctor lengths
+        # And vector lengths
         lang_length = torch.ones(batch_size, dtype=torch.int64).to(feats.device)
         done_sampling = [False for _ in range(batch_size)]
 
@@ -115,7 +115,7 @@ class Speaker(nn.Module):
             outputs, states = self.gru(inputs, states)  # outputs: (L=1,B,H)
             outputs = outputs.squeeze(0)                # outputs: (B,H)
             outputs = self.outputs2vocab(outputs)       # outputs: (B,V)
-
+            
             if greedy:
                 predicted = outputs.max(1)[1]
                 predicted = predicted.unsqueeze(1)
@@ -128,7 +128,7 @@ class Speaker(nn.Module):
                 lang.append(predicted_onehot.unsqueeze(1))
 
             predicted_npy = predicted_onehot.argmax(1).cpu().numpy()
-
+            
             # Update language lengths
             for i, pred in enumerate(predicted_npy):
                 if not done_sampling[i]:
@@ -158,7 +158,6 @@ class Speaker(nn.Module):
 
         return lang_tensor, lang_length
 
-
     def to_text(self, lang_onehot):
         texts = []
         lang = lang_onehot.argmax(2)
@@ -172,6 +171,129 @@ class Speaker(nn.Module):
         return np.array(texts, dtype=np.unicode_)
 
 
+class LiteralSpeaker(nn.Module):
+    def __init__(self, feat_model, embedding_module, hidden_size=100):
+        """super(Speaker, self).__init__()
+        self.embedding = embedding_module
+        self.feat_model = feat_model
+        self.feat_size = feat_model.final_feat_dim
+        self.embedding_dim = embedding_module.embedding_dim
+        self.vocab_size = embedding_module.num_embeddings
+        self.game = game
+        self.hidden_size = hidden_size"""
+        
+        super(LiteralSpeaker, self).__init__()
+        self.embedding = embedding_module
+        self.embedding_dim = embedding_module.embedding_dim
+        self.vocab_size = embedding_module.num_embeddings
+        self.hidden_size = hidden_size
+        self.feat_model = feat_model
+        self.feat_size = feat_model.final_feat_dim
+        self.gru = nn.GRU(self.embedding_dim, self.hidden_size)
+        self.outputs2vocab = nn.Linear(self.hidden_size, self.vocab_size)
+        self.init_h = nn.Linear(self.feat_size, self.hidden_size)
+
+    def forward(self, feats, seq, length, y):
+            
+        feats = torch.from_numpy(np.array([np.array(feat[y[idx],:,:,:].cpu()) for idx, feat in enumerate(feats)]))
+            
+        # feats is from example images
+        batch_size = seq.shape[0]
+        if batch_size > 1:
+            # BUGFIX? dont we need to sort feats too?
+            sorted_lengths, sorted_idx = torch.sort(length, descending=True)
+            seq = seq[sorted_idx]
+            feats = feats[sorted_idx]
+
+        feats = feats.unsqueeze(0)
+        # reorder from (B,L,D) to (L,B,D)
+        seq = seq.transpose(0, 1)
+
+        # embed your sequences
+        embed_seq = seq @ self.embedding.weight
+        
+        # embed features
+        feats_emb = self.feat_model(feats.squeeze().cuda())
+        feats_emb = self.init_h(feats_emb)
+        feats_emb = feats_emb.unsqueeze(0)
+        
+        # shape = (seq_len, batch, hidden_dim)
+        output, _ = self.gru(embed_seq, feats_emb)
+
+        # reorder from (L,B,D) to (B,L,D)
+        output = output.transpose(0, 1)
+
+        if batch_size > 1:
+            _, reversed_idx = torch.sort(sorted_idx)
+            output = output[reversed_idx]
+
+        max_length = output.size(1)
+        output_2d = output.view(batch_size * max_length, -1)
+        outputs_2d = self.outputs2vocab(output_2d)
+        lang_tensor = outputs_2d.view(batch_size, max_length, self.vocab_size)
+        
+        return lang_tensor
+    
+    def sample(self, feats, sos_index, eos_index, pad_index, greedy=False):
+        """Generate from image features using greedy search."""
+        with torch.no_grad():
+            batch_size = feats.size(0)
+
+            # initialize hidden states using image features
+            states = feats.unsqueeze(0)
+
+            # first input is SOS token
+            inputs = np.array([sos_index for _ in range(batch_size)])
+            inputs = torch.from_numpy(inputs)
+            inputs = inputs.unsqueeze(1)
+            inputs = inputs.to(feats.device)
+
+            # save SOS as first generated token
+            inputs_npy = inputs.squeeze(1).cpu().numpy()
+            sampled_ids = [[w] for w in inputs_npy]
+
+            # (B,L,D) to (L,B,D)
+            inputs = inputs.transpose(0, 1)
+
+            # compute embeddings
+            inputs = self.embedding(inputs)
+
+            for i in range(20):  # like in jacobs repo
+                outputs, states = self.gru(inputs, states)  # outputs: (L=1,B,H)
+                outputs = outputs.squeeze(0)                # outputs: (B,H)
+                outputs = self.outputs2vocab(outputs)       # outputs: (B,V)
+
+                if greedy:
+                    predicted = outputs.max(1)[1]
+                    predicted = predicted.unsqueeze(1)
+                else:
+                    outputs = F.softmax(outputs, dim=1)
+                    predicted = torch.multinomial(outputs, 1)
+
+                predicted_npy = predicted.squeeze(1).cpu().numpy()
+                predicted_lst = predicted_npy.tolist()
+
+                for w, so_far in zip(predicted_lst, sampled_ids):
+                    if so_far[-1] != eos_index:
+                        so_far.append(w)
+
+                inputs = predicted.transpose(0, 1)          # inputs: (L=1,B)
+                inputs = self.embedding(inputs)             # inputs: (L=1,B,E)
+
+            sampled_lengths = [len(text) for text in sampled_ids]
+            sampled_lengths = np.array(sampled_lengths)
+
+            max_length = max(sampled_lengths)
+            padded_ids = np.ones((batch_size, max_length)) * pad_index
+
+            for i in range(batch_size):
+                padded_ids[i, :sampled_lengths[i]] = sampled_ids[i]
+
+            sampled_lengths = torch.from_numpy(sampled_lengths).long()
+            sampled_ids = torch.from_numpy(padded_ids).long()
+
+        return sampled_ids, sampled_lengths
+    
 class RNNEncoder(nn.Module):
     """
     RNN Encoder - takes in onehot representations of tokens, rather than numeric
