@@ -176,7 +176,7 @@ def pretrain(split,
             this_loss = loss(lis_scores, y)
             lis_pred = lis_scores.argmax(1)
             this_acc = (lis_pred == y).float().mean().item()
-
+            
             if training:
                 # SGD step
                 this_loss.backward()
@@ -187,6 +187,114 @@ def pretrain(split,
 
     metrics = compute_average_metrics(meters)
     return metrics
+
+def rsarun(split,
+        epoch,
+        speaker,
+        optimizer,
+        loss,
+        dataloaders,
+        num_samples=0,
+        random_state=None):
+    """
+    Run the RSA model for a single epoch.
+
+    Parameters
+    ----------
+    split : ``str``
+        The dataloader split to use. Also determines model behavior if e.g.
+        ``split == 'train'`` then model will be in train mode/optimizer will be
+        run.
+    epoch : ``int``
+        current epoch
+    model : ``torch.nn.Module``
+        the model you are training/evaling
+    optimizer : ``torch.nn.optim.Optimizer``
+        the optimizer
+    loss : ``torch.nn.loss``
+        the loss function
+    dataloaders : ``dict[str, torch.utils.data.DataLoader]``
+        Dictionary of dataloaders whose keys are the names of the ``split``s
+        and whose values are the corresponding dataloaders
+    args : ``argparse.Namespace``
+        Arguments for this experiment run
+    random_state : ``np.random.RandomState``
+        The numpy random state in case anything stochastic happens during the
+        run
+
+    Returns
+    -------
+    metrics : ``dict[str, float]``
+        Metrics from this run; keys are statistics and values are their average
+        values across the batches
+    """
+    training = split == 'train'
+    dataloader = dataloaders[split]
+    if training:
+        speaker.train()
+        context = contextlib.suppress()
+    else:
+        speaker.eval()
+        context = torch.no_grad()  # Do not evaluate gradients for efficiency
+
+    # Initialize your average meters to keep track of the epoch's running average
+    measures = ['loss', 'acc']
+    meters = {m: util.AverageMeter() for m in measures}
+
+    sample_index = np.random.randint(0,len(dataloader),int(num_samples))
+    with context:
+        outputs = []
+        for batch_i, (img, y, lang) in enumerate(dataloader):
+            y = y.argmax(1) # convert from onehot
+            batch_size = img.shape[0]
+
+            # Convert to float
+            img = img.float()
+            if args.cuda:
+                img = img.cuda()
+                y = y.cuda()
+                lang = lang.cuda()
+
+            # Refresh the optimizer
+            if training:
+                optimizer.zero_grad()
+
+            # Format lang
+            max_len = 20
+            length = torch.tensor([np.count_nonzero(t) for t in lang.cpu()], dtype=np.int)
+            lang = F.one_hot(lang, num_classes=4+len(VOCAB))
+            lang = F.pad(lang,(0,0,0,max_len-lang.shape[1])).float()
+            
+            # Forward pass
+            hypo_out = speaker(img, lang, length, y)
+            
+            seq_len = hypo_out.size(1)
+            hypo_out = hypo_out
+            hint_seq = lang
+            
+            hypo_out_2d = hypo_out.view(batch_size * seq_len, 4+len(VOCAB))
+            hint_seq_2d = hint_seq.long().view(batch_size * seq_len, 4+len(VOCAB))
+            hypo_loss = F.cross_entropy(hypo_out_2d, torch.max(hint_seq_2d, 1)[1], reduction='none')
+            hypo_loss = hypo_loss.view(batch_size, seq_len)
+            hypo_loss = torch.mean(torch.sum(hypo_loss, dim=1))
+
+            if training:
+                # SGD step
+                hypo_loss.backward()
+                optimizer.step()
+
+            meters['loss'].update(hypo_loss, batch_size)
+            meters['acc'].update(hypo_loss, batch_size)
+            
+            if batch_i in sample_index:
+                print(img.shape)
+                img = img[:,0]
+                outputs.append([correct, 
+                                np.array(dataloader.dataset.to_text(lang.argmax(2))), 
+                                (img - torch.min(img))/(torch.max(img)-torch.min(img))])
+                    
+    metrics = compute_average_metrics(meters)
+    return metrics, np.array(outputs)
 
 def run(split,
         epoch,
@@ -344,6 +452,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default=1e-3, type=int)
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--n_workers', default=0, type=int)
+    parser.add_argument('--rsa', action='store_true')
 
     args = parser.parse_args()
     
@@ -382,208 +491,302 @@ if __name__ == '__main__':
         langs = np.append(langs, d['langs'])
     vocab = data.init_vocab(langs)
 
-    # Model
-    speaker_vision = vision.Conv4()
-    speaker = models.Speaker(speaker_vision, speaker_embs, args.game_type)
-    listener_vision = vision.Conv4()
-    listener = models.Listener(listener_vision, listener_embs)
-
-    if args.cuda:
-        speaker = speaker.cuda()
-        listener = listener.cuda()
-
-    # Optimization
-    optimizer = optim.Adam(list(speaker.parameters()) +
-                           list(listener.parameters()),
-                           lr=args.lr)
-    loss = nn.CrossEntropyLoss()
-
-    # Metrics
-    metrics = init_metrics()
-
-    # Pretrain
-    if args.pretrain:
-        if args.new:
-            for epoch in range(args.epochs):
-                train_metrics = defaultdict(list)
-                train_metrics['loss'] = []
-                train_metrics['acc'] = []
-                val_metrics = defaultdict(list)
-                val_metrics['loss'] = []
-                val_metrics['acc'] = []
-                for file in args.pretrain_data_file[0:len(args.pretrain_data_file)-1]:
-                    d = data.load_raw_data(file)
-                    dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
-                    run_args = (listener, optimizer, loss, dataloaders)
-                    temp_metrics = pretrain('train', epoch, *run_args)
-                    train_metrics['loss'].append(temp_metrics['loss'])
-                    train_metrics['acc'].append(temp_metrics['acc'])
-                for file in [args.pretrain_data_file[-1]]:
-                    d = data.load_raw_data(file)
-                    dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
-                    run_args = (listener, optimizer, loss, dataloaders)
-                    temp_metrics = pretrain('val', epoch, *run_args)
-                    val_metrics['loss'].append(temp_metrics['loss'])
-                    val_metrics['acc'].append(temp_metrics['acc'])
-                train_metrics['loss'] = np.mean(train_metrics['loss'])
-                train_metrics['acc'] = np.mean(train_metrics['acc'])
-                val_metrics['loss'] = np.mean(val_metrics['loss'])
-                val_metrics['acc'] = np.mean(val_metrics['acc'])
-
-                # Update your metrics, prepending the split name.
-                for metric, value in train_metrics.items():
-                    metrics['train_{}'.format(metric)].append(value)
-                for metric, value in val_metrics.items():
-                    metrics['val_{}'.format(metric)].append(value)
-                metrics['current_epoch'] = epoch
-
-                # Use validation accuracy to choose the best model. If it's the best,
-                # update the best metrics.
-                is_best = val_metrics['acc'] > metrics['best_acc']
-                if is_best:
-                    metrics['best_acc'] = val_metrics['acc']
-                    metrics['best_loss'] = val_metrics['loss']
-                    metrics['best_epoch'] = epoch
-                    best_listener = copy.deepcopy(listener)
-                print('Epoch '+str(epoch))
-            listener = best_listener
-            torch.save(listener, 'pretrained_listener.pt')
-            torch.save(vocab, 'vocab.pt')
-            print(metrics)
-        else:
-            listener = torch.load('pretrained_listener.pt')
-            vocab = torch.load('vocab.pt')
-    for epoch in range(args.epochs):
-        train_metrics = defaultdict(list)
-        train_metrics['loss'] = []
-        train_metrics['acc'] = []
-        val_metrics = defaultdict(list)
-        val_metrics['loss'] = []
-        val_metrics['acc'] = []
-        sample_index = np.random.randint(0,len(args.data_file)-1,3)
-        sample_file = [args.data_file[index] for index in sample_index]
-        outputs = []
-        for file in args.data_file[0:len(args.data_file)-1]:
-            d = data.load_raw_data(file)
-            dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
-            run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game_type)
-            if epoch == args.epochs-1 and file in sample_file:
-                temp_metrics, output = run('train', epoch, *run_args, 1)
-                outputs.append(output)
-            else:
-                temp_metrics, output = run('train', epoch, *run_args)
-            train_metrics['loss'].append(temp_metrics['loss'])
-            train_metrics['acc'].append(temp_metrics['acc'])
-        if epoch == args.epochs-1:
-            if args.game_type == 'concept':
-                outputs = np.array(outputs)
-                outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2],outputs.shape[3])
-                for output_index, output in enumerate(outputs):
-                    for game_index, game in enumerate(output):
-                        if args.pretrain:
-                            np.savetxt('../output/pretrain_concept/train/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
-                            np.savetxt('../output/pretrain_concept/train/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
-                            for batch_index, batch in enumerate(game[2]):
-                                plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
-                        else:
-                            np.savetxt('../output/concept/train/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
-                            np.savetxt('../output/concept/train/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
-                            for batch_index, batch in enumerate(game[2]):
-                                plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
-            else:
-                outputs = np.array(outputs)
-                outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2])
-                for output_index, output in enumerate(outputs):
-                    if args.pretrain:
-                        np.savetxt('../output/pretrain_reference/train/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
-                        np.savetxt('../output/pretrain_reference/train/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
-                        for batch_index, batch in enumerate(output[2]):
-                                plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
-                    else:
-                        np.savetxt('../output/reference/train/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
-                        np.savetxt('../output/reference/train/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
-                        for batch_index, batch in enumerate(output[2]):
-                            plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
-                            plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
-                            plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
-        outputs = []
-        for file in [args.data_file[-1]]:
-            d = data.load_raw_data(file)
-            dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True,num_workers=args.n_workers)}
-            run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game_type)
+    if args.rsa:
+        # Model
+        speaker_vision = vision.Conv4()
+        speaker = models.LiteralSpeaker(speaker_vision, speaker_embs)
+        if args.cuda:
+            speaker = speaker.cuda()
+        
+        # Optimization
+        optimizer = optim.Adam(list(speaker.parameters()),
+                               lr=args.lr)
+        loss = nn.CrossEntropyLoss()
+        
+        # Metrics
+        metrics = init_metrics()
+        
+        for epoch in range(args.epochs):
+            train_metrics = defaultdict(list)
+            train_metrics['loss'] = []
+            train_metrics['acc'] = []
+            val_metrics = defaultdict(list)
+            val_metrics['loss'] = []
+            val_metrics['acc'] = []
+            sample_index = np.random.randint(0,len(args.data_file)-1,3)
+            sample_file = [args.data_file[index] for index in sample_index]
+            outputs = []
+            for file in args.data_file[0:len(args.data_file)-1]:
+                d = data.load_raw_data(file)
+                dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
+                run_args = (speaker, optimizer, loss, dataloaders)
+                if epoch == args.epochs-1 and file in sample_file:
+                    temp_metrics, output = rsarun('train', epoch, *run_args, 1)
+                    outputs.append(output)
+                else:
+                    temp_metrics, output = rsarun('train', epoch, *run_args)
+                train_metrics['loss'].append(temp_metrics['loss'])
+                train_metrics['acc'].append(temp_metrics['acc'])
             if epoch == args.epochs-1:
-                temp_metrics, output = run('val', epoch, *run_args, 1)
-                outputs.append(output)
-            else:
-                temp_metrics, output = run('val', epoch, *run_args)
-            val_metrics['loss'].append(temp_metrics['loss'])
-            val_metrics['acc'].append(temp_metrics['acc'])
-        if epoch == args.epochs-1:
-            if args.game_type == 'concept':
-                outputs = np.array(outputs)
-                outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2],outputs.shape[3])
-                for output_index, output in enumerate(outputs):
-                    for game_index, game in enumerate(output):
-                        if args.pretrain:
-                            np.savetxt('../output/pretrain_concept/val/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
-                            np.savetxt('../output/pretrain_concept/val/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
-                            for batch in game[2]:
-                                plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
-                        else:
-                            np.savetxt('../output/concept/val/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
-                            np.savetxt('../output/concept/val/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
-                            for batch in game[2]:
-                                plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
-            else:
                 outputs = np.array(outputs)
                 outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2])
                 for output_index, output in enumerate(outputs):
-                    if args.pretrain:
-                        np.savetxt('../output/pretrain_reference/val/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
-                        np.savetxt('../output/pretrain_reference/val/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
-                        for batch_index, batch in enumerate(output[2]):
-                                plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
-                    else:
-                        np.savetxt('../output/reference/val/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
-                        np.savetxt('../output/reference/val/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
-                        for batch_index, batch in enumerate(output[2]):
-                                plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
-                                plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
-        train_metrics['loss'] = np.mean(train_metrics['loss'])
-        train_metrics['acc'] = np.mean(train_metrics['acc'])
-        val_metrics['loss'] = np.mean(val_metrics['loss'])
-        val_metrics['acc'] = np.mean(val_metrics['acc'])
+                    np.savetxt('../output/literal_speaker/train/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                    np.savetxt('../output/literal_speaker/train/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                    for batch_index, batch in enumerate(output[2]):
+                            plt.imsave('../output/literal_speaker/train/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                            plt.imsave('../output/literal_speaker/train/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                            plt.imsave('../output/literal_speaker/train/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+            outputs = []
+            for file in [args.data_file[-1]]:
+                d = data.load_raw_data(file)
+                dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True,num_workers=args.n_workers)}
+                run_args = (speaker, optimizer, loss, dataloaders)
+                if epoch == args.epochs-1:
+                    temp_metrics, output = rsarun('val', epoch, *run_args, 1)
+                    outputs.append(output)
+                else:
+                    temp_metrics, output = rsarun('val', epoch, *run_args)
+                val_metrics['loss'].append(temp_metrics['loss'])
+                val_metrics['acc'].append(temp_metrics['acc'])
+            if epoch == args.epochs-1:
+                outputs = np.array(outputs)
+                outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2])
+                for output_index, output in enumerate(outputs):
+                    np.savetxt('../output/literal_speaker/val/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                    np.savetxt('../output/literal_speaker/val/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                    for batch_index, batch in enumerate(output[2]):
+                        plt.imsave('../output/literal_speaker/val/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                        plt.imsave('../output/literal_speaker/val/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                        plt.imsave('../output/literal_speaker/val/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+            train_metrics['loss'] = np.mean(train_metrics['loss'])
+            train_metrics['acc'] = np.mean(train_metrics['acc'])
+            val_metrics['loss'] = np.mean(val_metrics['loss'])
+            val_metrics['acc'] = np.mean(val_metrics['acc'])
 
-        # Update your metrics, prepending the split name.
-        for metric, value in train_metrics.items():
-            metrics['train_{}'.format(metric)].append(value)
-        for metric, value in val_metrics.items():
-            metrics['val_{}'.format(metric)].append(value)
-        metrics['current_epoch'] = epoch
+            # Update your metrics, prepending the split name.
+            for metric, value in train_metrics.items():
+                metrics['train_{}'.format(metric)].append(value)
+            for metric, value in val_metrics.items():
+                metrics['val_{}'.format(metric)].append(value)
+            metrics['current_epoch'] = epoch
 
-        # Use validation accuracy to choose the best model. If it's the best,
-        # update the best metrics.
-        is_best = val_metrics['acc'] > metrics['best_acc']
-        if is_best:
-            metrics['best_acc'] = val_metrics['acc']
-            metrics['best_loss'] = val_metrics['loss']
-            metrics['best_epoch'] = epoch
-            best_speaker = copy.deepcopy(speaker)
-            best_listener = copy.deepcopy(listener)
-        print('Epoch '+str(epoch))
-        print(train_metrics['acc'])
-        print(val_metrics['acc'])
-    print(metrics)
+            # Use validation accuracy to choose the best model. If it's the best,
+            # update the best metrics.
+            is_best = val_metrics['acc'] > metrics['best_acc']
+            if is_best:
+                metrics['best_acc'] = val_metrics['acc']
+                metrics['best_loss'] = val_metrics['loss']
+                metrics['best_epoch'] = epoch
+                best_speaker = copy.deepcopy(speaker)
+            print('Epoch '+str(epoch))
+            print(train_metrics['acc'])
+            print(val_metrics['acc'])
+        print(metrics)
+    else:
+        # Model
+        speaker_vision = vision.Conv4()
+        speaker = models.Speaker(speaker_vision, speaker_embs, args.game_type)
+        listener_vision = vision.Conv4()
+        listener = models.Listener(listener_vision, listener_embs)
+        if args.cuda:
+            speaker = speaker.cuda()
+            listener = listener.cuda()
+
+        # Optimization
+        optimizer = optim.Adam(list(speaker.parameters()) +
+                               list(listener.parameters()),
+                               lr=args.lr)
+        loss = nn.CrossEntropyLoss()
+
+        # Metrics
+        metrics = init_metrics()
+
+        # Pretrain
+        if args.pretrain:
+            if args.new:
+                for epoch in range(args.epochs):
+                    train_metrics = defaultdict(list)
+                    train_metrics['loss'] = []
+                    train_metrics['acc'] = []
+                    val_metrics = defaultdict(list)
+                    val_metrics['loss'] = []
+                    val_metrics['acc'] = []
+                    for file in args.pretrain_data_file[0:len(args.pretrain_data_file)-1]:
+                        d = data.load_raw_data(file)
+                        dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
+                        run_args = (listener, optimizer, loss, dataloaders)
+                        temp_metrics = pretrain('train', epoch, *run_args)
+                        train_metrics['loss'].append(temp_metrics['loss'])
+                        train_metrics['acc'].append(temp_metrics['acc'])
+                    for file in [args.pretrain_data_file[-1]]:
+                        d = data.load_raw_data(file)
+                        dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
+                        run_args = (listener, optimizer, loss, dataloaders)
+                        temp_metrics = pretrain('val', epoch, *run_args)
+                        val_metrics['loss'].append(temp_metrics['loss'])
+                        val_metrics['acc'].append(temp_metrics['acc'])
+                    train_metrics['loss'] = np.mean(train_metrics['loss'])
+                    train_metrics['acc'] = np.mean(train_metrics['acc'])
+                    val_metrics['loss'] = np.mean(val_metrics['loss'])
+                    val_metrics['acc'] = np.mean(val_metrics['acc'])
+
+                    # Update your metrics, prepending the split name.
+                    for metric, value in train_metrics.items():
+                        metrics['train_{}'.format(metric)].append(value)
+                    for metric, value in val_metrics.items():
+                        metrics['val_{}'.format(metric)].append(value)
+                    metrics['current_epoch'] = epoch
+
+                    # Use validation accuracy to choose the best model. If it's the best,
+                    # update the best metrics.
+                    is_best = val_metrics['acc'] > metrics['best_acc']
+                    if is_best:
+                        metrics['best_acc'] = val_metrics['acc']
+                        metrics['best_loss'] = val_metrics['loss']
+                        metrics['best_epoch'] = epoch
+                        best_listener = copy.deepcopy(listener)
+                    print('Epoch '+str(epoch))
+                listener = best_listener
+                torch.save(listener, 'pretrained_listener.pt')
+                torch.save(vocab, 'vocab.pt')
+                print(metrics)
+            else:
+                listener = torch.load('pretrained_listener.pt')
+                vocab = torch.load('vocab.pt')
+        
+        # Run
+        for epoch in range(args.epochs):
+            train_metrics = defaultdict(list)
+            train_metrics['loss'] = []
+            train_metrics['acc'] = []
+            val_metrics = defaultdict(list)
+            val_metrics['loss'] = []
+            val_metrics['acc'] = []
+            sample_index = np.random.randint(0,len(args.data_file)-1,3)
+            sample_file = [args.data_file[index] for index in sample_index]
+            outputs = []
+            for file in args.data_file[0:len(args.data_file)-1]:
+                d = data.load_raw_data(file)
+                dataloaders = {'train': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True, num_workers=args.n_workers)}
+                run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game_type)
+                if epoch == args.epochs-1 and file in sample_file:
+                    temp_metrics, output = run('train', epoch, *run_args, 1)
+                    outputs.append(output)
+                else:
+                    temp_metrics, output = run('train', epoch, *run_args)
+                train_metrics['loss'].append(temp_metrics['loss'])
+                train_metrics['acc'].append(temp_metrics['acc'])
+            if epoch == args.epochs-1:
+                if args.game_type == 'concept':
+                    outputs = np.array(outputs)
+                    outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2],outputs.shape[3])
+                    for output_index, output in enumerate(outputs):
+                        for game_index, game in enumerate(output):
+                            if args.pretrain:
+                                np.savetxt('../output/pretrain_concept/train/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
+                                np.savetxt('../output/pretrain_concept/train/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
+                                for batch_index, batch in enumerate(game[2]):
+                                    plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/pretrain_concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                            else:
+                                np.savetxt('../output/concept/train/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
+                                np.savetxt('../output/concept/train/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
+                                for batch_index, batch in enumerate(game[2]):
+                                    plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/concept/train/img_'+str(output_index)+'_'+str(batch_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                else:
+                    outputs = np.array(outputs)
+                    outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2])
+                    for output_index, output in enumerate(outputs):
+                        if args.pretrain:
+                            np.savetxt('../output/pretrain_reference/train/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                            np.savetxt('../output/pretrain_reference/train/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                            for batch_index, batch in enumerate(output[2]):
+                                    plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/pretrain_reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                        else:
+                            np.savetxt('../output/reference/train/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                            np.savetxt('../output/reference/train/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                            for batch_index, batch in enumerate(output[2]):
+                                plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                plt.imsave('../output/reference/train/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+            outputs = []
+            for file in [args.data_file[-1]]:
+                d = data.load_raw_data(file)
+                dataloaders = {'val': DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True,num_workers=args.n_workers)}
+                run_args = (speaker, listener, optimizer, loss, dataloaders, args.pretrain, args.game_type)
+                if epoch == args.epochs-1:
+                    temp_metrics, output = run('val', epoch, *run_args, 1)
+                    outputs.append(output)
+                else:
+                    temp_metrics, output = run('val', epoch, *run_args)
+                val_metrics['loss'].append(temp_metrics['loss'])
+                val_metrics['acc'].append(temp_metrics['acc'])
+            if epoch == args.epochs-1:
+                if args.game_type == 'concept':
+                    outputs = np.array(outputs)
+                    outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2],outputs.shape[3])
+                    for output_index, output in enumerate(outputs):
+                        for game_index, game in enumerate(output):
+                            if args.pretrain:
+                                np.savetxt('../output/pretrain_concept/val/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
+                                np.savetxt('../output/pretrain_concept/val/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
+                                for batch in game[2]:
+                                    plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/pretrain_concept/val/img_'+str(output_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                            else:
+                                np.savetxt('../output/concept/val/correct_'+str(output_index)+'_'+str(game_index)+'.txt',game[0].cpu().numpy())
+                                np.savetxt('../output/concept/val/lang_'+str(output_index)+'_'+str(game_index)+'.txt',game[1],fmt='%s')
+                                for batch in game[2]:
+                                    plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/concept/val/img_'+str(output_index)+'_'+str(game_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                else:
+                    outputs = np.array(outputs)
+                    outputs = outputs.reshape(outputs.shape[0]*outputs.shape[1],outputs.shape[2])
+                    for output_index, output in enumerate(outputs):
+                        if args.pretrain:
+                            np.savetxt('../output/pretrain_reference/val/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                            np.savetxt('../output/pretrain_reference/val/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                            for batch_index, batch in enumerate(output[2]):
+                                    plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/pretrain_reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+                        else:
+                            np.savetxt('../output/reference/val/correct_'+str(output_index)+'.txt',output[0].cpu().numpy())
+                            np.savetxt('../output/reference/val/lang_'+str(output_index)+'.txt',output[1],fmt='%s')
+                            for batch_index, batch in enumerate(output[2]):
+                                    plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_1.png',batch[0].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_2.png',batch[1].permute(1,2,0).cpu().numpy())
+                                    plt.imsave('../output/reference/val/img_'+str(output_index)+'_'+str(batch_index)+'_3.png',batch[2].permute(1,2,0).cpu().numpy())
+            train_metrics['loss'] = np.mean(train_metrics['loss'])
+            train_metrics['acc'] = np.mean(train_metrics['acc'])
+            val_metrics['loss'] = np.mean(val_metrics['loss'])
+            val_metrics['acc'] = np.mean(val_metrics['acc'])
+
+            # Update your metrics, prepending the split name.
+            for metric, value in train_metrics.items():
+                metrics['train_{}'.format(metric)].append(value)
+            for metric, value in val_metrics.items():
+                metrics['val_{}'.format(metric)].append(value)
+            metrics['current_epoch'] = epoch
+
+            # Use validation accuracy to choose the best model. If it's the best,
+            # update the best metrics.
+            is_best = val_metrics['acc'] > metrics['best_acc']
+            if is_best:
+                metrics['best_acc'] = val_metrics['acc']
+                metrics['best_loss'] = val_metrics['loss']
+                metrics['best_epoch'] = epoch
+                best_speaker = copy.deepcopy(speaker)
+                best_listener = copy.deepcopy(listener)
+            print('Epoch '+str(epoch))
+            print(train_metrics['acc'])
+            print(val_metrics['acc'])
+        print(metrics)
