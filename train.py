@@ -267,10 +267,11 @@ def rsarun(split,
             
             # Forward pass
             hypo_out = speaker(img, lang, length, y)
+            hint_seq = lang
+            hypo_out = hypo_out[:, :-1].contiguous()
+            hint_seq = hint_seq[:, 1:].contiguous()
             
             seq_len = hypo_out.size(1)
-            hypo_out = hypo_out
-            hint_seq = lang
             
             hypo_out_2d = hypo_out.view(batch_size * seq_len, 4+len(VOCAB))
             hint_seq_2d = hint_seq.long().view(batch_size * seq_len, 4+len(VOCAB))
