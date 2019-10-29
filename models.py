@@ -199,8 +199,8 @@ class LiteralSpeaker(nn.Module):
             
         # feats is from example images
         batch_size = seq.shape[0]
+        
         if batch_size > 1:
-            # BUGFIX? dont we need to sort feats too?
             sorted_lengths, sorted_idx = torch.sort(length, descending=True)
             seq = seq[sorted_idx]
             feats = feats[sorted_idx]
@@ -210,7 +210,7 @@ class LiteralSpeaker(nn.Module):
         seq = seq.transpose(0, 1)
 
         # embed your sequences
-        embed_seq = seq @ self.embedding.weight
+        embed_seq = seq.cuda() @ self.embedding.weight
         
         # embed features
         feats_emb = self.feat_model(feats.squeeze().cuda())
@@ -231,68 +231,64 @@ class LiteralSpeaker(nn.Module):
         output_2d = output.view(batch_size * max_length, -1)
         outputs_2d = self.outputs2vocab(output_2d)
         lang_tensor = outputs_2d.view(batch_size, max_length, self.vocab_size)
-        
         return lang_tensor
     
-    def sample(self, feats, sos_index, eos_index, pad_index, greedy=False):
+    def sample(self, feats, y, greedy=False):
         """Generate from image features using greedy search."""
+        pad_index = 0
+        sos_index = 1
+        eos_index = 2
         with torch.no_grad():
             batch_size = feats.size(0)
 
             # initialize hidden states using image features
-            states = feats.unsqueeze(0)
+            #states = feats.unsqueeze(0)
+            feats = torch.from_numpy(np.array([np.array(feat[y[idx],:,:,:].cpu()) for idx, feat in enumerate(feats)]))
+            feats = feats.unsqueeze(0)
+            feats_emb = self.feat_model(feats.squeeze().cuda())
+            feats_emb = self.init_h(feats_emb)
+            states = feats_emb.unsqueeze(0)
 
             # first input is SOS token
+            max_len = 20
             inputs = np.array([sos_index for _ in range(batch_size)])
             inputs = torch.from_numpy(inputs)
             inputs = inputs.unsqueeze(1)
             inputs = inputs.to(feats.device)
+            inputs = F.one_hot(inputs, num_classes=4+len(VOCAB)).float()
 
             # save SOS as first generated token
             inputs_npy = inputs.squeeze(1).cpu().numpy()
-            sampled_ids = [[w] for w in inputs_npy]
+            sampled = np.array([[w] for w in inputs_npy])
+            sampled = np.transpose(sampled, (1, 0, 2))
 
             # (B,L,D) to (L,B,D)
-            inputs = inputs.transpose(0, 1)
+            inputs = inputs.transpose(0,1)
 
             # compute embeddings
-            inputs = self.embedding(inputs)
+            inputs = inputs.cuda() @ self.embedding.weight
 
-            for i in range(20):  # like in jacobs repo
+            for i in range(max_len-1):
                 outputs, states = self.gru(inputs, states)  # outputs: (L=1,B,H)
                 outputs = outputs.squeeze(0)                # outputs: (B,H)
                 outputs = self.outputs2vocab(outputs)       # outputs: (B,V)
 
                 if greedy:
-                    predicted = outputs.max(1)[1]
+                    predicted = outputs.max(1)[1].cpu()
                     predicted = predicted.unsqueeze(1)
                 else:
                     outputs = F.softmax(outputs, dim=1)
-                    predicted = torch.multinomial(outputs, 1)
-
-                predicted_npy = predicted.squeeze(1).cpu().numpy()
-                predicted_lst = predicted_npy.tolist()
-
-                for w, so_far in zip(predicted_lst, sampled_ids):
-                    if so_far[-1] != eos_index:
-                        so_far.append(w)
-
-                inputs = predicted.transpose(0, 1)          # inputs: (L=1,B)
-                inputs = self.embedding(inputs)             # inputs: (L=1,B,E)
-
-            sampled_lengths = [len(text) for text in sampled_ids]
-            sampled_lengths = np.array(sampled_lengths)
-
-            max_length = max(sampled_lengths)
-            padded_ids = np.ones((batch_size, max_length)) * pad_index
-
-            for i in range(batch_size):
-                padded_ids[i, :sampled_lengths[i]] = sampled_ids[i]
-
-            sampled_lengths = torch.from_numpy(sampled_lengths).long()
-            sampled_ids = torch.from_numpy(padded_ids).long()
-
-        return sampled_ids, sampled_lengths
+                    predicted = torch.multinomial(outputs.cpu(), 1)
+                    
+                predicted = predicted.transpose(0, 1)        # inputs: (L=1,B)
+                predicted = F.one_hot(predicted, num_classes=4+len(VOCAB)).float()
+                inputs = predicted.cuda() @ self.embedding.weight             # inputs: (L=1,B,E)
+                
+                sampled = np.concatenate((sampled,predicted),axis = 0)
+            
+            sampled = torch.tensor(sampled).permute(1,0,2)
+            sampled_lengths = torch.tensor([np.count_nonzero(t) for t in sampled], dtype=np.int)
+        return sampled, sampled_lengths
     
 class RNNEncoder(nn.Module):
     """
@@ -316,7 +312,7 @@ class RNNEncoder(nn.Module):
         seq = seq.transpose(0, 1)
 
         # embed your sequences
-        embed_seq = seq @ self.embedding.weight
+        embed_seq = seq.cuda() @ self.embedding.weight
 
         packed = rnn_utils.pack_padded_sequence(
             embed_seq,
