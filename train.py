@@ -95,7 +95,7 @@ def compute_average_metrics(meters):
     }
     return metrics
 
-def run(data_file, split, run_type, speaker, listener, optimizer, loss, game_type = 'reference'):
+def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, game_type = 'reference', num_samples = 5, get_outputs = False, s0 = True):
     """
     Run the model for a single epoch.
 
@@ -129,6 +129,7 @@ def run(data_file, split, run_type, speaker, listener, optimizer, loss, game_typ
         values across the batches
     """
     outputs = []
+    
     if split == 'train':
         if run_type == 'literal':
             speaker.train()
@@ -154,6 +155,11 @@ def run(data_file, split, run_type, speaker, listener, optimizer, loss, game_typ
             d = data.load_raw_data(file)
             dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True)
             for batch_i, (img, y, lang) in enumerate(dataloader):
+                if get_outputs:
+                    outputs = {'img': [],'y': [],'lang': [],'out_lang': [], 'out_y': [], 'out_scores': []}
+                    outputs['img'].append(img)
+                    outputs['y'].append(y)
+                    outputs['lang'].append(lang)
                 if run_type == 'literal' or run_type == 'pretrain' or game_type == 'reference' or run_type == 'sample':
                     y = y.argmax(1) # convert from onehot
                 batch_size = img.shape[0]
@@ -186,14 +192,31 @@ def run(data_file, split, run_type, speaker, listener, optimizer, loss, game_typ
                 if run_type == 'pretrain':
                     lis_scores = listener(img, lang, length)
                 elif run_type == 'literal':
-                    out = lang.reshape(lang.shape[0]*lang.shape[1],-1)
-                    outputs = out.argmax(1)
-                    outputs = outputs.reshape(lang.shape[0],lang.shape[1])
                     hypo_out = speaker(img, lang, length, y)
                 elif run_type == 'sample':
-                    lang, lang_length = speaker.sample(img, y, greedy = True)
+                    if s0:
+                        langs, lang_lengths = speaker.sample(img, y, greedy = True)
+                    else:
+                        langs, lang_lengths = speaker(img, y)
+                    langs = langs.unsqueeze(0); lang_lengths = lang_lengths.unsqueeze(0)
+                    for _ in range(num_samples-1):
+                        if s0:
+                            lang, lang_length = speaker.sample(img, y)
+                        else:
+                            lang, lang_length = speaker(img, y)
+                        lang = lang.unsqueeze(0); lang_length = lang_length.unsqueeze(0)
+                        langs = torch.cat((langs, lang), 0)
+                        lang_lengths = torch.cat((lang_lengths, lang_length), 0)
+                    lang = langs[:,0]
+                    if get_outputs:
+                        outputs['out_lang'].append(langs.reshape(langs.shape[0]*langs.shape[1]*langs.shape[2],-1).argmax(1).reshape(langs.shape[0],langs.shape[1],langs.shape[2]))
                 else:
                     lang, lang_length = speaker(img, y)
+                    if get_outputs:
+                        outputs['out_lang'].append(lang.reshape(lang.shape[0]*lang.shape[1],-1).argmax(1).reshape(lang.shape[0],lang.shape[1]))
+                    if  batch_i == 0:
+                        print(lang.reshape(lang.shape[0]*lang.shape[1],-1).argmax(1).reshape(lang.shape[0],lang.shape[1]))
+                        print(lang_length)
 
                 # Evaluate loss and accuracy
                 if run_type == 'pretrain':
@@ -231,26 +254,64 @@ def run(data_file, split, run_type, speaker, listener, optimizer, loss, game_typ
                     outputs = [hypo_out_2d.argmax(1),hint_seq_2d.argmax(1)]
                 else:
                     if game_type == 'reference':
-                        lis_scores = listener(img, lang, lang_length)
+                        if run_type == 'sample':
+                            best_lis_scores = torch.zeros((batch_size,3))
+                            best_lis_pred = torch.zeros(batch_size)
+                            best_correct = torch.zeros(batch_size)
+                            best_this_acc = torch.zeros(batch_size)
+                            for lang, lang_length in zip(langs, lang_lengths):
+                                lis_scores = listener(img, lang, lang_length)
+                                lis_pred = lis_scores.argmax(1)
+                                correct = (lis_pred == y)
+                                
+                                if get_outputs:
+                                    print('indv loss')
+                                    print(loss(lis_scores.cuda(), y.long()))
+                                for game in range(batch_size):
+                                    this_acc = correct[game].float().mean().item()
+                                    if this_acc>best_this_acc[game]:
+                                        best_lis_scores[game] = lis_scores[game]
+                                        best_lis_pred[game] = lis_pred[game]
+                                        best_correct[game] = correct[game]
+                                        best_this_acc[game] = this_acc
+                             
+                            # Evaluate loss and accuracy
+                            this_loss = loss(best_lis_scores.cuda(), y.long())
+                            this_acc = best_correct[game].float().mean().item()
+                            
+                            if split == 'train':
+                                # SGD step
+                                this_loss.backward()
+                                optimizer.step()
+                            
+                            meters['loss'].update(this_loss, batch_size)
+                            meters['acc'].update(this_acc, batch_size)
+                            
+                            if get_outputs:
+                                outputs['out_y'].append(best_lis_pred)
+                                outputs['out_scores'].append(best_lis_scores)
+                                print('total loss')
+                                print(this_loss)
+                        else:
+                            lis_scores = listener(img, lang, lang_length)
 
-                        # Evaluate loss and accuracy
-                        this_loss = loss(lis_scores, y.long())
-                        lis_pred = lis_scores.argmax(1)
-                        correct = (lis_pred == y)
-                        this_acc = correct.float().mean().item()
+                            # Evaluate loss and accuracy
+                            this_loss = loss(lis_scores, y.long()) # +25**(abs(lang_length.float().mean()-2))
+                            lis_pred = lis_scores.argmax(1)
+                            correct = (lis_pred == y)
+                            this_acc = correct.float().mean().item()
 
-                        if split == 'train':
-                            # SGD step
-                            this_loss.backward()
-                            optimizer.step()
+                            if split == 'train':
+                                # SGD step
+                                this_loss.backward()
+                                optimizer.step()
 
-                        meters['loss'].update(this_loss, batch_size)
-                        meters['acc'].update(this_acc, batch_size)
-                        
-                        out = lang.reshape(lang.shape[0]*lang.shape[1],-1)
-                        outputs = out.argmax(1)
-                        outputs = outputs.reshape(lang.shape[0],lang.shape[1])
-
+                            meters['loss'].update(this_loss, batch_size)
+                            meters['acc'].update(this_acc, batch_size)
+                            
+                            if get_outputs:
+                                outputs['out_y'].append(lis_pred)
+                                outputs['out_scores'].append(lis_scores)
                     if game_type == 'concept':
                         games_per_batch = 5
                         sampled_img, sampled_y = sample_ref_game(img, y, games_per_batch = games_per_batch)
@@ -282,9 +343,10 @@ if __name__ == '__main__':
     parser = ArgumentParser(description='Train', formatter_class=ArgumentDefaultsHelpFormatter)
     
     parser.add_argument('--new', action='store_true')
+    parser.add_argument('--get_outputs', action='store_true')
     parser.add_argument('--game_type', choices=['concept', 'reference'], default='reference', type=str)
     parser.add_argument('--data_type', choices=['single', 'spatial'], default='single', type=str)
-    parser.add_argument('--rsa', action='store_true')
+    parser.add_argument('--s0', action='store_true')
     parser.add_argument('--pretrain', action='store_true')
     parser.add_argument('--pretrain_data_file', default=None, type=str)
     parser.add_argument('--train_data_file', default=None, type=str)
@@ -298,7 +360,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # Data
-    if (args.pretrain or args.rsa) and args.pretrain_data_file == None:
+    if (args.pretrain or args.s0) and args.pretrain_data_file == None:
         if args.data_type == 'single':
             args.pretrain_data_file = ['../data/single/reference-1000-6.npz','../data/single/reference-1000-7.npz','../data/single/reference-1000-8.npz','../data/single/reference-1000-9.npz','../data/single/reference-1000-10.npz']
         if args.data_type == 'spatial':
@@ -325,17 +387,8 @@ if __name__ == '__main__':
                 args.val_data_file = ['../data/single/concept-100-50.npz']
             if args.data_type == 'spatial':
                 args.val_data_file = ['../data/spatial/concept-1000-5.npz']
-    if args.test_data_file == None:
-        if args.game_type == 'reference':
-            if args.data_type == 'single':
-                args.test_data_file = ['../data/single/reference-1000-6.npz']
-            if args.data_type == 'spatial':
-                args.test_data_file = ['../data/spatial/reference-1000-6.npz']
-        if args.game_type == 'concept':
-            if args.data_type == 'single':
-                args.test_data_file = ['../data/single/concept-100-51.npz']
-            if args.data_type == 'spatial':
-                args.test_data_file = ['../data/spatial/concept-1000-6.npz']
+    if args.get_outputs:
+        outputs_data_file = ['../data/single/reference-100.npz']
     
     # Vocab
     speaker_embs = nn.Embedding(4 + len(VOCAB), 50)
@@ -363,7 +416,7 @@ if __name__ == '__main__':
         vocab = torch.load('single_vocab.pt')
 
     # Model
-    if args.rsa:
+    if args.s0:
         speaker_vision = vision.Conv4()
         speaker = models.LiteralSpeaker(speaker_vision, speaker_embs)
         listener_vision = vision.Conv4()
@@ -384,49 +437,153 @@ if __name__ == '__main__':
     # Metrics
     metrics = init_metrics()
 
-    # Pretrain
-    if args.pretrain or args.rsa:
-        if args.new:
-            for epoch in range(args.epochs):
-                # Train
-                data_file = args.pretrain_data_file[0:len(args.pretrain_data_file)-1]
-                train_metrics, outputs = run(data_file, 'train', 'pretrain', speaker, listener, optimizer, loss)
-                # Validation
-                data_file = [args.pretrain_data_file[-1]]
-                val_metrics, outputs = run(data_file, 'val', 'pretrain', speaker, listener, optimizer, loss)
-
-                # Update metrics, prepending the split name
-                for metric, value in train_metrics.items():
-                    metrics['train_{}'.format(metric)].append(value)
-                for metric, value in val_metrics.items():
-                    metrics['val_{}'.format(metric)].append(value)
-                metrics['current_epoch'] = epoch
-                
-                # Use validation accuracy to choose the best model
-                is_best = val_metrics['acc'] > metrics['best_acc']
-                if is_best:
-                    metrics['best_acc'] = val_metrics['acc']
-                    metrics['best_loss'] = val_metrics['loss']
-                    metrics['best_epoch'] = epoch
-                    best_listener = copy.deepcopy(listener)
-                    
-                print(epoch)
-                print(val_metrics)
+    if args.get_outputs:
+        epoch = 0
+        
+        speaker = torch.load('pretrained_speaker.pt')
+        listener = torch.load('pretrained_listener.pt')
+        _, outputs = run(epoch, outputs_data_file, 'val', 'sample', speaker, listener, optimizer, loss, num_samples = 5, get_outputs = True, s0 = False)
+        imgs = outputs['img'][0]
+        ys = outputs['y'][0].cpu().numpy()
+        langs = outputs['lang'][0].cpu().numpy()
+        out_langs = outputs['out_lang'][0].cpu().numpy()
+        out_ys = outputs['out_y'][0].cpu().numpy()
+        out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
+        print(vocab)
+        for game in range(imgs.shape[0]):
+            plt.imsave('../output/ref_game_'+str(game)+'_img_1.png', imgs[game][0].permute(1,2,0).cpu().numpy())
+            plt.imsave('../output/ref_game_'+str(game)+'_img_2.png', imgs[game][1].permute(1,2,0).cpu().numpy())
+            plt.imsave('../output/ref_game_'+str(game)+'_img_3.png', imgs[game][2].permute(1,2,0).cpu().numpy())
+            np.savetxt('../output/ref_game_'+str(game)+'_y.txt', ys[game])
+            np.savetxt('../output/ref_game_'+str(game)+'_lang.txt', langs[game])
+            for sample in range(out_langs.shape[0]):
+                np.savetxt('../output/sample_ref_game_'+str(game)+'_sample_'+str(sample)+'_outlang.txt', out_langs[sample][game])
+        np.savetxt('../output/sample_ref_outy.txt', out_ys)
+        np.savetxt('../output/sample_ref_outscore.txt', out_scores)
+        
+        
+        speaker = torch.load('literal_speaker.pt')
+        listener = torch.load('pretrained_listener.pt')
+        _, outputs = run(epoch, outputs_data_file, 'val', 'sample', speaker, listener, optimizer, loss, num_samples = 5, get_outputs = True)
+        imgs = outputs['img'][0]
+        ys = outputs['y'][0].cpu().numpy()
+        langs = outputs['lang'][0].cpu().numpy()
+        out_langs = outputs['out_lang'][0].cpu().numpy()
+        out_ys = outputs['out_y'][0].cpu().numpy()
+        out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
+        print(vocab)
+        for game in range(imgs.shape[0]):
+            for sample in range(out_langs.shape[0]):
+                np.savetxt('../output/s0_sample_ref_game_'+str(game)+'_sample_'+str(sample)+'_outlang.txt', out_langs[sample][game])
+        np.savetxt('../output/s0_sample_ref_outy.txt', out_ys)
+        np.savetxt('../output/s0_sample_ref_outscore.txt', out_scores)
             
-            # Save the best model
-            listener = best_listener
-            torch.save(listener, 'pretrained_listener.pt')
-        else:
-            listener = torch.load('pretrained_listener.pt')
+        """
+        speaker = torch.load('speaker.pt')
+        listener = torch.load('listener.pt')
+        _, outputs = run(epoch, outputs_data_file, 'val', 'pragmatic', speaker, listener, optimizer, loss, get_outputs = True)
+        imgs = outputs['img'][0].cpu().numpy()
+        ys = outputs['y'][0].cpu().numpy()
+        langs = outputs['lang'][0].cpu().numpy()
+        out_langs = outputs['out_lang'][0].cpu().numpy()
+        out_ys = outputs['out_y'][0].cpu().numpy()
+        out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
+        for game in range(imgs.shape[0]):
+            np.savetxt('../output/pragmatic_ref_game_'+str(game)+'_sample_'+str(sample)+'_outlang.txt', out_langs[game])
+        
+        np.savetxt('../output/pragmatic_ref_outy.txt', out_ys)
+        np.savetxt('../output/pragmatic_ref_outscore.txt', out_scores)
+            
+        speaker = torch.load('pretrained_speaker.pt')
+        listener = torch.load('pretrained_listener.pt')
+        _, outputs = run(epoch, outputs_data_file, 'val', 'pragmatic', speaker, listener, optimizer, loss, get_outputs = True)
+        imgs = outputs['img'][0].cpu().numpy()
+        ys = outputs['y'][0].cpu().numpy()
+        langs = outputs['lang'][0].cpu().numpy()
+        out_langs = outputs['out_lang'][0].cpu().numpy()
+        out_ys = outputs['out_y'][0].cpu().numpy()
+        out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
+        for game in range(imgs.shape[0]):
+            np.savetxt('../output/pretrained_pragmatic_ref_game_'+str(game)+'_sample_'+str(sample)+'_outlang.txt', out_langs[game])
+        np.savetxt('../output/pretrained_pragmatic_ref_outy.txt', out_ys)
+        np.savetxt('../output/pretrained_pragmatic_ref_outscore.txt', out_scores)
+        """
+            
+    else:
+        # Pretrain
+        if args.pretrain or args.s0:
+            if args.new:
+                for epoch in range(args.epochs):
+                    # Train
+                    data_file = args.pretrain_data_file[0:len(args.pretrain_data_file)-1]
+                    train_metrics, _ = run(epoch, data_file, 'train', 'pretrain', speaker, listener, optimizer, loss)
+                    # Validation
+                    data_file = [args.pretrain_data_file[-1]]
+                    val_metrics, _ = run(epoch, data_file, 'val', 'pretrain', speaker, listener, optimizer, loss)
 
-    # Train
-    if args.rsa:
-        if args.new:
+                    # Update metrics, prepending the split name
+                    for metric, value in train_metrics.items():
+                        metrics['train_{}'.format(metric)].append(value)
+                    for metric, value in val_metrics.items():
+                        metrics['val_{}'.format(metric)].append(value)
+                    metrics['current_epoch'] = epoch
+                    
+                    # Use validation accuracy to choose the best model
+                    is_best = val_metrics['acc'] > metrics['best_acc']
+                    if is_best:
+                        metrics['best_acc'] = val_metrics['acc']
+                        metrics['best_loss'] = val_metrics['loss']
+                        metrics['best_epoch'] = epoch
+                        best_listener = copy.deepcopy(listener)
+                        
+                    print(epoch)
+                # Save the best model
+                listener = best_listener
+                torch.save(listener, 'pretrained_listener.pt')
+            else:
+                listener = torch.load('pretrained_listener.pt')
+
+        # Train
+        if args.s0:
+            if args.new:
+                for epoch in range(args.epochs):
+                    # Train
+                    train_metrics, _ = run(epoch, args.train_data_file, 'train', 'literal', speaker, listener, optimizer, loss, game_type = args.game_type)
+                    # Validation
+                    val_metrics, _ = run(epoch, args.val_data_file, 'val', 'literal', speaker, listener, optimizer, loss, game_type = args.game_type)
+
+                    # Update metrics, prepending the split name
+                    for metric, value in train_metrics.items():
+                        metrics['train_{}'.format(metric)].append(value)
+                    for metric, value in val_metrics.items():
+                        metrics['val_{}'.format(metric)].append(value)
+                    metrics['current_epoch'] = epoch
+
+                    # Use validation accuracy to choose the best model
+                    is_best = val_metrics['acc'] > metrics['best_acc']
+                    if is_best:
+                        metrics['best_acc'] = val_metrics['acc']
+                        metrics['best_loss'] = val_metrics['loss']
+                        metrics['best_epoch'] = epoch
+                        best_speaker = copy.deepcopy(speaker)
+                        
+                    print(epoch)
+                # Save the best model
+                speaker = best_speaker
+                torch.save(speaker, 'literal_speaker.pt')
+            else:
+                epoch = 0
+                speaker = torch.load('literal_speaker.pt')
+            
+            # Sample and rerank
+            test_metrics, _ = run(epoch, args.val_data_file, 'val', 'sample', speaker, listener, optimizer, loss, game_type = args.game_type, num_samples = 10)
+            print(test_metrics)
+        else:
             for epoch in range(args.epochs):
                 # Train
-                train_metrics, outputs = run(args.train_data_file, 'train', 'literal', speaker, listener, optimizer, loss, game_type = args.game_type)
+                train_metrics, _ = run(epoch, args.train_data_file, 'train', 'pragmatic', speaker, listener, optimizer, loss, args.game_type)
                 # Validation
-                val_metrics, outputs = run(args.val_data_file, 'val', 'literal', speaker, listener, optimizer, loss, game_type = args.game_type)
+                val_metrics, _ = run(epoch, args.val_data_file, 'val', 'pragmatic', speaker, listener, optimizer, loss, args.game_type)
 
                 # Update metrics, prepending the split name
                 for metric, value in train_metrics.items():
@@ -442,48 +599,13 @@ if __name__ == '__main__':
                     metrics['best_loss'] = val_metrics['loss']
                     metrics['best_epoch'] = epoch
                     best_speaker = copy.deepcopy(speaker)
+                    best_listener = copy.deepcopy(listener)
                     
                 print(epoch)
-                print(val_metrics)
-                
             # Save the best model
-            speaker = best_speaker
-            torch.save(speaker, 'literal_speaker.pt')
-        else:
-            speaker = torch.load('literal_speaker.pt')
-        
-        # Sample and rerank
-        test_metrics, outputs = run(args.test_data_file, 'val', 'sample', speaker, listener, optimizer, loss, game_type = args.game_type)
-        print(test_metrics)
-        print(vocab)
-        print(outputs)
-    else:
-        for epoch in range(args.epochs):
-            print(epoch)
-            # Train
-            train_metrics, outputs = run(args.train_data_file, 'train', 'pragmatic', speaker, listener, optimizer, loss, args.game_type)
-            # Validation
-            train_metrics, outputs = run(args.val_data_file, 'val', 'pragmatic', speaker, listener, optimizer, loss, args.game_type)
-
-            # Update metrics, prepending the split name
-            for metric, value in train_metrics.items():
-                metrics['train_{}'.format(metric)].append(value)
-            for metric, value in val_metrics.items():
-                metrics['val_{}'.format(metric)].append(value)
-            metrics['current_epoch'] = epoch
-
-            # Use validation accuracy to choose the best model
-            is_best = val_metrics['acc'] > metrics['best_acc']
-            if is_best:
-                metrics['best_acc'] = val_metrics['acc']
-                metrics['best_loss'] = val_metrics['loss']
-                metrics['best_epoch'] = epoch
-                best_speaker = copy.deepcopy(speaker)
-                best_listener = copy.deepcopy(listener)
-                
-            print(epoch)
-            print(val_metrics)
-
-        # Save the best model
-        torch.save(best_speaker, 'speaker.pt')
-        torch.save(best_listener, 'listener.pt')
+            if args.pretrain:
+                torch.save(best_speaker, 'pretrained_speaker.pt')
+            else:
+                torch.save(best_speaker, 'speaker.pt')
+                torch.save(best_listener, 'listener.pt')
+        print(metrics)
