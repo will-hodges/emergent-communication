@@ -11,6 +11,9 @@ import torch.nn.utils.rnn as rnn_utils
 import data
 from train import VOCAB
 
+PAD_IDX = 0
+SOS_IDX = 1
+EOS_IDX = 2
 
 class FeatureMLP(nn.Module):
     def __init__(self, input_size=16, output_size=16):
@@ -85,6 +88,8 @@ class Speaker(nn.Module):
 
         # This contains are series of sampled onehot vectors
         lang = []
+        eos_prob = []
+        
         # And vector lengths
         lang_length = torch.ones(batch_size, dtype=torch.int64).to(feats.device)
         done_sampling = [False for _ in range(batch_size)]
@@ -126,6 +131,8 @@ class Speaker(nn.Module):
                 predicted_onehot = F.gumbel_softmax(outputs, tau=1, hard=True)
                 # Add to lang
                 lang.append(predicted_onehot.unsqueeze(1))
+                idx_prob = F.log_softmax(outputs, dim = 1)
+                eos_prob.append(idx_prob[:,data.EOS_IDX])
 
             predicted_npy = predicted_onehot.argmax(1).cpu().numpy()
             
@@ -151,12 +158,24 @@ class Speaker(nn.Module):
 
         # Cat language tensors
         lang_tensor = torch.cat(lang, 1)
+        for i in range(lang_tensor.shape[0]):
+            lang_tensor[i,lang_length[i]:] = 0
 
         # Trim max length
         max_lang_len = lang_length.max()
         lang_tensor = lang_tensor[:, :max_lang_len, :]
-
-        return lang_tensor, lang_length
+        
+        # eos prob -> eos loss
+        eos_prob = torch.stack(eos_prob, dim = 1)
+        for i in range(eos_prob.shape[0]):
+            r_len = torch.arange(1,eos_prob.shape[1]+1,dtype=torch.float32)
+            eos_prob[i] = eos_prob[i]*r_len.to(eos_prob.device)
+            eos_prob[i,lang_length[i]:] = 0
+        eos_loss = -eos_prob
+        eos_loss = eos_loss.sum(1)/lang_length.float()
+        eos_loss = eos_loss.mean()
+        
+        return lang_tensor, lang_length, eos_loss
 
     def to_text(self, lang_onehot):
         texts = []
@@ -173,15 +192,6 @@ class Speaker(nn.Module):
 
 class LiteralSpeaker(nn.Module):
     def __init__(self, feat_model, embedding_module, hidden_size=100):
-        """super(Speaker, self).__init__()
-        self.embedding = embedding_module
-        self.feat_model = feat_model
-        self.feat_size = feat_model.final_feat_dim
-        self.embedding_dim = embedding_module.embedding_dim
-        self.vocab_size = embedding_module.num_embeddings
-        self.game = game
-        self.hidden_size = hidden_size"""
-        
         super(LiteralSpeaker, self).__init__()
         self.embedding = embedding_module
         self.embedding_dim = embedding_module.embedding_dim
@@ -235,9 +245,6 @@ class LiteralSpeaker(nn.Module):
     
     def sample(self, feats, y, greedy=False):
         """Generate from image features using greedy search."""
-        pad_index = 0
-        sos_index = 1
-        eos_index = 2
         with torch.no_grad():
             batch_size = feats.size(0)
 
@@ -251,7 +258,7 @@ class LiteralSpeaker(nn.Module):
 
             # first input is SOS token
             max_len = 20
-            inputs = np.array([sos_index for _ in range(batch_size)])
+            inputs = np.array([SOS_IDX for _ in range(batch_size)])
             inputs = torch.from_numpy(inputs)
             inputs = inputs.unsqueeze(1)
             inputs = inputs.to(feats.device)
@@ -287,8 +294,77 @@ class LiteralSpeaker(nn.Module):
                 sampled = np.concatenate((sampled,predicted),axis = 0)
             
             sampled = torch.tensor(sampled).permute(1,0,2)
-            sampled_lengths = torch.tensor([np.count_nonzero(t) for t in sampled], dtype=np.int)
+            
+            sampled_id = sampled.reshape(sampled.shape[0]*sampled.shape[1],-1).argmax(1).reshape(sampled.shape[0],sampled.shape[1])
+            sampled_lengths = torch.tensor([np.count_nonzero(t) for t in sampled_id.cpu()], dtype=np.int)
         return sampled, sampled_lengths
+    
+class LanguageModel(nn.Module):
+    def __init__(self, embedding_module, hidden_size=100):
+        super(LanguageModel, self).__init__()
+        self.embedding = embedding_module
+        self.embedding_dim = embedding_module.embedding_dim
+        self.vocab_size = embedding_module.num_embeddings
+        self.hidden_size = hidden_size
+        self.gru = nn.GRU(self.embedding_dim, self.hidden_size)
+        self.outputs2vocab = nn.Linear(self.hidden_size, self.vocab_size)
+
+    def forward(self, seq, length):
+        batch_size = seq.shape[0]
+        if batch_size > 1:
+            sorted_lengths, sorted_idx = torch.sort(length, descending=True)
+            seq = seq[sorted_idx]
+
+        # reorder from (B,L,D) to (L,B,D)
+        seq = seq.transpose(0, 1)
+
+        # embed your sequences
+        embed_seq = seq.cuda() @ self.embedding.weight
+        
+        # shape = (seq_len, batch, hidden_dim)
+        feats_emb = torch.zeros(1, batch_size, self.hidden_size).to(embed_seq.device)
+        output, _ = self.gru(embed_seq, feats_emb)
+
+        # reorder from (L,B,D) to (B,L,D)
+        output = output.transpose(0, 1)
+
+        if batch_size > 1:
+            _, reversed_idx = torch.sort(sorted_idx)
+            output = output[reversed_idx]
+
+        max_length = output.size(1)
+        output_2d = output.view(batch_size * max_length, -1)
+        outputs_2d = self.outputs2vocab(output_2d)
+        lang_tensor = outputs_2d.view(batch_size, max_length, self.vocab_size)
+        return lang_tensor
+    
+    def probability(self, seq, length):
+        with torch.no_grad():
+            max_len = 20
+            batch_size = seq.shape[0]
+            seq = F.pad(seq,(0,0,max_len-seq.shape[1],0)).float()
+            
+            # reorder from (B,L,D) to (L,B,D)
+            seq = seq.transpose(0, 1)
+
+            # embed your sequences
+            embed_seq = seq.cuda() @ self.embedding.weight
+
+            # shape = (seq_len, batch, hidden_dim)
+            feats_emb = torch.zeros(1, batch_size, self.hidden_size).to(embed_seq.device)
+            
+            inputs = embed_seq
+            states = feats_emb
+            prob = torch.ones(batch_size)
+            for i in range(max_len):
+                outputs, states = self.gru(inputs[i,:,:].unsqueeze(0), states)  # outputs: (L=1,B,H)
+                outputs = outputs.squeeze(0)                # outputs: (B,H)
+                outputs = self.outputs2vocab(outputs)       # outputs: (B,V)
+
+                idx_prob = F.log_softmax(outputs,dim=1).cpu().numpy()
+                for j,k in enumerate(seq[i].argmax(1)):
+                    prob[j] = prob[j]+idx_prob[j,k]
+        return prob
     
 class RNNEncoder(nn.Module):
     """
