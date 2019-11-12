@@ -95,7 +95,7 @@ def compute_average_metrics(meters):
     }
     return metrics
 
-def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, game_type = 'reference', num_samples = 5, get_outputs = False, s0 = True):
+def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, game_type = 'reference', num_samples = 5, get_outputs = False, srr = True):
     """
     Run the model for a single epoch.
 
@@ -130,10 +130,13 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
     """
     outputs = []
     
+    language_model = torch.load('language_model.pt')
+    language_model.eval()
+    
     if split == 'train':
-        if run_type == 'literal':
+        if run_type == 'literal' or run_type == 'lm':
             speaker.train()
-        if run_type == 'pretrain':
+        elif run_type == 'pretrain':
             listener.train()
         else:
             speaker.train()
@@ -142,7 +145,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
     else:
         if run_type != 'pretrain':
             speaker.eval()
-        if run_type != 'literal':
+        if run_type != 'literal' and run_type != 'lm':
             listener.eval()
         context = torch.no_grad()  # Do not evaluate gradients for efficiency
 
@@ -171,7 +174,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                 if split == 'train':
                     optimizer.zero_grad()
 
-                if run_type == 'literal' or run_type == 'pretrain':
+                if run_type == 'literal' or run_type == 'pretrain' or run_type == 'lm':
                     max_len = 20
                     length = torch.tensor([np.count_nonzero(t) for t in lang.cpu()], dtype=np.int)
                     lang = F.one_hot(lang, num_classes = 4+len(VOCAB))
@@ -184,7 +187,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                 if args.cuda:
                     img = img.cuda()
                     y = y.cuda()
-                    if run_type == 'literal' or run_type == 'pretrain':
+                    if run_type == 'literal' or run_type == 'pretrain' or run_type == 'lm':
                         lang.cuda()
                         length = length.cuda()
                 
@@ -193,17 +196,19 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                     lis_scores = listener(img, lang, length)
                 elif run_type == 'literal':
                     hypo_out = speaker(img, lang, length, y)
+                elif run_type == 'lm':
+                    hypo_out = speaker(lang, length)
                 elif run_type == 'sample':
-                    if s0:
+                    if srr:
                         langs, lang_lengths = speaker.sample(img, y, greedy = True)
                     else:
-                        langs, lang_lengths = speaker(img, y)
+                        langs, lang_lengths, eos_loss = speaker(img, y)
                     langs = langs.unsqueeze(0); lang_lengths = lang_lengths.unsqueeze(0)
                     for _ in range(num_samples-1):
-                        if s0:
+                        if srr:
                             lang, lang_length = speaker.sample(img, y)
                         else:
-                            lang, lang_length = speaker(img, y)
+                            lang, lang_length, eos_loss = speaker(img, y)
                         lang = lang.unsqueeze(0); lang_length = lang_length.unsqueeze(0)
                         langs = torch.cat((langs, lang), 0)
                         lang_lengths = torch.cat((lang_lengths, lang_length), 0)
@@ -211,12 +216,9 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                     if get_outputs:
                         outputs['out_lang'].append(langs.reshape(langs.shape[0]*langs.shape[1]*langs.shape[2],-1).argmax(1).reshape(langs.shape[0],langs.shape[1],langs.shape[2]))
                 else:
-                    lang, lang_length = speaker(img, y)
+                    lang, lang_length, eos_loss = speaker(img, y)
                     if get_outputs:
                         outputs['out_lang'].append(lang.reshape(lang.shape[0]*lang.shape[1],-1).argmax(1).reshape(lang.shape[0],lang.shape[1]))
-                    if  batch_i == 0:
-                        print(lang.reshape(lang.shape[0]*lang.shape[1],-1).argmax(1).reshape(lang.shape[0],lang.shape[1]))
-                        print(lang_length)
 
                 # Evaluate loss and accuracy
                 if run_type == 'pretrain':
@@ -231,7 +233,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                     
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
-                elif run_type == 'literal':
+                elif run_type == 'literal' or run_type == 'lm':
                     hint_seq = lang.cuda()
                     hypo_out = hypo_out[:, :-1].contiguous()
                     hint_seq = hint_seq[:, 1:].contiguous()
@@ -263,10 +265,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                                 lis_scores = listener(img, lang, lang_length)
                                 lis_pred = lis_scores.argmax(1)
                                 correct = (lis_pred == y)
-                                
-                                if get_outputs:
-                                    print('indv loss')
-                                    print(loss(lis_scores.cuda(), y.long()))
+
                                 for game in range(batch_size):
                                     this_acc = correct[game].float().mean().item()
                                     if this_acc>best_this_acc[game]:
@@ -288,15 +287,20 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                             meters['acc'].update(this_acc, batch_size)
                             
                             if get_outputs:
+                                lm_seq = language_model(lang,lang_length)[:, :-1].contiguous()
+                                seq_prob = loss(lm_seq.view(batch_size * lm_seq.size(1),4+len(VOCAB)).cuda(), torch.max(lang.cuda()[:, 1:].contiguous().long().view(batch_size * lm_seq.size(1),4+len(VOCAB)),1)[1])
+                                print(seq_prob)
                                 outputs['out_y'].append(best_lis_pred)
                                 outputs['out_scores'].append(best_lis_scores)
-                                print('total loss')
-                                print(this_loss)
                         else:
                             lis_scores = listener(img, lang, lang_length)
 
                             # Evaluate loss and accuracy
-                            this_loss = loss(lis_scores, y.long()) # +25**(abs(lang_length.float().mean()-2))
+                            lm_seq = language_model(lang,lang_length)[:, :-1].contiguous()
+                            seq_prob = loss(lm_seq.view(batch_size * lm_seq.size(1),4+len(VOCAB)).cuda(), torch.max(lang.cuda()[:, 1:].contiguous().long().view(batch_size * lm_seq.size(1),4+len(VOCAB)),1)[1])
+                            #print(eos_loss)
+                            #print(seq_prob)
+                            this_loss = loss(lis_scores, y.long())+seq_prob.detach()*0.01
                             lis_pred = lis_scores.argmax(1)
                             correct = (lis_pred == y)
                             this_acc = correct.float().mean().item()
@@ -309,7 +313,29 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                             meters['loss'].update(this_loss, batch_size)
                             meters['acc'].update(this_acc, batch_size)
                             
+                            """
+                            if batch_i == 0:
+                                print(lang.reshape(lang.shape[0]*lang.shape[1],-1).argmax(1).reshape(lang.shape[0],lang.shape[1])[0:3])
+                                print(lang_length)
+                                print('loss')
+                                print(this_loss)
+                                print('no length')
+                                print(loss(lis_scores, y.long()))
+                                print('acc')
+                                print(this_acc)
+                            """
                             if get_outputs:
+                                hypo_out = language_model(lang,lang_length)
+                                hint_seq = lang.cuda()
+                                hypo_out = hypo_out[:, :-1].contiguous()
+                                hint_seq = hint_seq[:, 1:].contiguous()
+
+                                seq_len = hypo_out.size(1)
+
+                                hypo_out_2d = hypo_out.view(batch_size * seq_len, 4+len(VOCAB))
+                                hint_seq_2d = hint_seq.long().view(batch_size * seq_len, 4+len(VOCAB))
+                                hypo_loss = loss(hypo_out_2d.cuda(), torch.max(hint_seq_2d, 1)[1])
+                                print(hypo_loss)
                                 outputs['out_y'].append(lis_pred)
                                 outputs['out_scores'].append(lis_scores)
                     if game_type == 'concept':
@@ -332,7 +358,6 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
 
                             meters['loss'].update(this_loss, batch_size)
                             meters['acc'].update(this_acc, batch_size)   
-    
     metrics = compute_average_metrics(meters)
     return metrics, outputs
 
@@ -345,13 +370,12 @@ if __name__ == '__main__':
     parser.add_argument('--new', action='store_true')
     parser.add_argument('--get_outputs', action='store_true')
     parser.add_argument('--game_type', choices=['concept', 'reference'], default='reference', type=str)
-    parser.add_argument('--data_type', choices=['single', 'spatial'], default='single', type=str)
-    parser.add_argument('--s0', action='store_true')
+    parser.add_argument('--lm', action='store_true')
+    parser.add_argument('--srr', action='store_true')
     parser.add_argument('--pretrain', action='store_true')
     parser.add_argument('--pretrain_data_file', default=None, type=str)
     parser.add_argument('--train_data_file', default=None, type=str)
     parser.add_argument('--val_data_file', default=None, type=str)
-    parser.add_argument('--test_data_file', default=None, type=str)
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--lr', default=1e-3, type=int)
@@ -360,35 +384,20 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # Data
-    if (args.pretrain or args.s0) and args.pretrain_data_file == None:
-        if args.data_type == 'single':
-            args.pretrain_data_file = ['../data/single/reference-1000-6.npz','../data/single/reference-1000-7.npz','../data/single/reference-1000-8.npz','../data/single/reference-1000-9.npz','../data/single/reference-1000-10.npz']
-        if args.data_type == 'spatial':
-            args.pretrain_data_file = ['../data/spatial/reference-1000-6.npz','../data/spatial/reference-1000-7.npz','../data/spatial/reference-1000-8.npz','../data/spatial/reference-1000-9.npz','../data/spatial/reference-1000-10.npz']
+    if (args.pretrain or args.srr) and args.pretrain_data_file == None:
+        args.pretrain_data_file = ['./data/single/reference-1000-16.npz','./data/single/reference-1000-17.npz','./data/single/reference-1000-18.npz','./data/single/reference-1000-19.npz','./data/single/reference-1000-20.npz','./data/single/reference-1000-21.npz','./data/single/reference-1000-22.npz','./data/single/reference-1000-23.npz','./data/single/reference-1000-24.npz','./data/single/reference-1000-25.npz']
+        # pretrain = './data/single/reference-1000-6.npz','./data/single/reference-1000-7.npz','./data/single/reference-1000-8.npz','./data/single/reference-1000-9.npz','./data/single/reference-1000-10.npz','./data/single/reference-1000-11.npz','./data/single/reference-1000-12.npz','./data/single/reference-1000-13.npz','./data/single/reference-1000-14.npz','./data/single/reference-1000-15.npz'
+        # pretrain_small = './data/single/reference-1000-6.npz','./data/single/reference-1000-7.npz','./data/single/reference-1000-8.npz','./data/single/reference-1000-9.npz','./data/single/reference-1000-10.npz'
+        # pretrain2 = './data/single/reference-1000-16.npz','./data/single/reference-1000-17.npz','./data/single/reference-1000-18.npz','./data/single/reference-1000-19.npz','./data/single/reference-1000-20.npz','./data/single/reference-1000-21.npz','./data/single/reference-1000-22.npz','./data/single/reference-1000-23.npz','./data/single/reference-1000-24.npz','./data/single/reference-1000-25.npz'
+        # pretrain2_small = './data/single/reference-1000-16.npz','./data/single/reference-1000-17.npz','./data/single/reference-1000-18.npz','./data/single/reference-1000-19.npz','./data/single/reference-1000-20.npz'
+    if args.lm and args.pretrain_data_file == None:
+        args.pretrain_data_file = ['./data/single/reference-1000-6.npz','./data/single/reference-1000-7.npz','./data/single/reference-1000-8.npz','./data/single/reference-1000-9.npz','./data/single/reference-1000-10.npz','./data/single/reference-1000-11.npz','./data/single/reference-1000-12.npz','./data/single/reference-1000-13.npz','./data/single/reference-1000-14.npz','./data/single/reference-1000-15.npz','./data/single/reference-1000-16.npz','./data/single/reference-1000-17.npz','./data/single/reference-1000-18.npz','./data/single/reference-1000-19.npz','./data/single/reference-1000-20.npz','./data/single/reference-1000-21.npz','./data/single/reference-1000-22.npz','./data/single/reference-1000-23.npz','./data/single/reference-1000-24.npz','./data/single/reference-1000-25.npz']
     if args.train_data_file == None:
         if args.game_type == 'reference':
-            if args.data_type == 'single':
-                args.train_data_file = ['../data/single/reference-1000-1.npz','../data/single/reference-1000-2.npz','../data/single/reference-1000-3.npz','../data/single/reference-1000-4.npz']
-            if args.data_type == 'spatial':
-                args.train_data_file = ['../data/spatial/reference-1000-1.npz','../data/spatial/reference-1000-2.npz','../data/spatial/reference-1000-3.npz','../data/spatial/reference-1000-4.npz']
-        if args.game_type == 'concept':
-            if args.data_type == 'single':
-                args.train_data_file = ['../data/single/concept-100-1.npz','../data/single/concept-100-2.npz','../data/single/concept-100-3.npz','../data/single/concept-100-4.npz','../data/single/concept-100-5.npz','../data/single/concept-100-6.npz','../data/single/concept-100-7.npz','../data/single/concept-100-8.npz','../data/single/concept-100-9.npz','../data/single/concept-100-10.npz','../data/single/concept-100-11.npz','../data/single/concept-100-12.npz','../data/single/concept-100-13.npz','../data/single/concept-100-14.npz','../data/single/concept-100-15.npz','../data/single/concept-100-16.npz','../data/single/concept-100-17.npz','../data/single/concept-100-18.npz','../data/single/concept-100-19.npz','../data/single/concept-100-20.npz','../data/single/concept-100-21.npz','../data/single/concept-100-22.npz','../data/single/concept-100-23.npz','../data/single/concept-100-24.npz','../data/single/concept-100-25.npz','../data/single/concept-100-26.npz','../data/single/concept-100-27.npz','../data/single/concept-100-28.npz','../data/single/concept-100-29.npz','../data/single/concept-100-30.npz','../data/single/concept-100-31.npz','../data/single/concept-100-32.npz','../data/single/concept-100-33.npz','../data/single/concept-100-34.npz','../data/single/concept-100-35.npz','../data/single/concept-100-36.npz','../data/single/concept-100-37.npz','../data/single/concept-100-38.npz','../data/single/concept-100-39.npz','../data/single/concept-100-40.npz','../data/single/concept-100-41.npz','../data/single/concept-100-42.npz','../data/single/concept-100-43.npz','../data/single/concept-100-44.npz','../data/single/concept-100-45.npz','../data/single/concept-100-46.npz','../data/single/concept-100-47.npz','../data/single/concept-100-48.npz','../data/single/concept-100-49.npz']
-            if args.data_type == 'spatial':
-                args.train_data_file = ['../data/spatial/concept-1000-1.npz','../data/spatial/concept-1000-2.npz','../data/spatial/concept-1000-3.npz','../data/spatial/concept-1000-4.npz']
+            args.train_data_file = ['./data/single/reference-1000-1.npz','./data/single/reference-1000-2.npz','./data/single/reference-1000-3.npz','./data/single/reference-1000-4.npz']
     if args.val_data_file == None:
         if args.game_type == 'reference':
-            if args.data_type == 'single':
-                args.val_data_file = ['../data/single/reference-1000-5.npz']
-            if args.data_type == 'spatial':
-                args.val_data_file = ['../data/spatial/reference-1000-5.npz']
-        if args.game_type == 'concept':
-            if args.data_type == 'single':
-                args.val_data_file = ['../data/single/concept-100-50.npz']
-            if args.data_type == 'spatial':
-                args.val_data_file = ['../data/spatial/concept-1000-5.npz']
-    if args.get_outputs:
-        outputs_data_file = ['../data/single/reference-100.npz']
+            args.val_data_file = ['./data/single/reference-1000-5.npz']
     
     # Vocab
     speaker_embs = nn.Embedding(4 + len(VOCAB), 50)
@@ -404,114 +413,151 @@ if __name__ == '__main__':
         for file in args.val_data_file:
             d = data.load_raw_data(file)
             langs = np.append(langs, d['langs'])
-        for file in args.test_data_file:
-            d = data.load_raw_data(file)
-            langs = np.append(langs, d['langs'])
         vocab = data.init_vocab(langs)
-        if single:
-            torch.save(vocab,'single_vocab.pt')
-        if spatial:
-            torch.save(vocab,'single_vocab.pt')
+        torch.save(vocab,'single_vocab.pt')
     else:
         vocab = torch.load('single_vocab.pt')
 
     # Model
-    if args.s0:
-        speaker_vision = vision.Conv4()
-        speaker = models.LiteralSpeaker(speaker_vision, speaker_embs)
-        listener_vision = vision.Conv4()
-        listener = models.Listener(listener_vision, listener_embs)
+    if args.lm:
+        language_model = models.LanguageModel(speaker_embs)
+        listener = None
+        if args.cuda:
+            language_model = language_model.cuda()
+        # Optimization
+        optimizer = optim.Adam(list(language_model.parameters()),lr=args.lr)
     else:
-        speaker_vision = vision.Conv4()
-        speaker = models.Speaker(speaker_vision, speaker_embs, args.game_type)
-        listener_vision = vision.Conv4()
-        listener = models.Listener(listener_vision, listener_embs)
-    if args.cuda:
-        speaker = speaker.cuda()
-        listener = listener.cuda()
-
-    # Optimization
-    optimizer = optim.Adam(list(speaker.parameters())+list(listener.parameters()),lr=args.lr)
+        if args.srr:
+            speaker_vision = vision.Conv4()
+            speaker = models.LiteralSpeaker(speaker_vision, speaker_embs)
+            listener_vision = vision.Conv4()
+            listener = models.Listener(listener_vision, listener_embs)
+        else:
+            speaker_vision = vision.Conv4()
+            speaker = models.Speaker(speaker_vision, speaker_embs, args.game_type)
+            listener_vision = vision.Conv4()
+            listener = models.Listener(listener_vision, listener_embs)
+        if args.cuda:
+            speaker = speaker.cuda()
+            listener = listener.cuda()
+        # Optimization
+        optimizer = optim.Adam(list(speaker.parameters())+list(listener.parameters()),lr=args.lr)
     loss = nn.CrossEntropyLoss()
 
     # Metrics
     metrics = init_metrics()
 
     if args.get_outputs:
+        files = ['./data/single/test/reference-1000.npz','./data/single/test_context_both/reference-1000.npz','./data/single/test_context_color/reference-1000.npz','./data/single/test_context_shape/reference-1000.npz', './data/single/test_no_context/reference-1000.npz']
+        output_files = ['./output/test/','./output/test_context_both/','./output/test_context_color/','./output/test_context_shape/','./output/test_no_context/']
         epoch = 0
         
-        speaker = torch.load('pretrained_speaker.pt')
-        listener = torch.load('pretrained_listener.pt')
-        _, outputs = run(epoch, outputs_data_file, 'val', 'sample', speaker, listener, optimizer, loss, num_samples = 5, get_outputs = True, s0 = False)
-        imgs = outputs['img'][0]
-        ys = outputs['y'][0].cpu().numpy()
-        langs = outputs['lang'][0].cpu().numpy()
-        out_langs = outputs['out_lang'][0].cpu().numpy()
-        out_ys = outputs['out_y'][0].cpu().numpy()
-        out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
-        print(vocab)
-        for game in range(imgs.shape[0]):
-            plt.imsave('../output/ref_game_'+str(game)+'_img_1.png', imgs[game][0].permute(1,2,0).cpu().numpy())
-            plt.imsave('../output/ref_game_'+str(game)+'_img_2.png', imgs[game][1].permute(1,2,0).cpu().numpy())
-            plt.imsave('../output/ref_game_'+str(game)+'_img_3.png', imgs[game][2].permute(1,2,0).cpu().numpy())
-            np.savetxt('../output/ref_game_'+str(game)+'_y.txt', ys[game])
-            np.savetxt('../output/ref_game_'+str(game)+'_lang.txt', langs[game])
-            for sample in range(out_langs.shape[0]):
-                np.savetxt('../output/sample_ref_game_'+str(game)+'_sample_'+str(sample)+'_outlang.txt', out_langs[sample][game])
-        np.savetxt('../output/sample_ref_outy.txt', out_ys)
-        np.savetxt('../output/sample_ref_outscore.txt', out_scores)
-        
-        
         speaker = torch.load('literal_speaker.pt')
-        listener = torch.load('pretrained_listener.pt')
-        _, outputs = run(epoch, outputs_data_file, 'val', 'sample', speaker, listener, optimizer, loss, num_samples = 5, get_outputs = True)
-        imgs = outputs['img'][0]
-        ys = outputs['y'][0].cpu().numpy()
-        langs = outputs['lang'][0].cpu().numpy()
-        out_langs = outputs['out_lang'][0].cpu().numpy()
-        out_ys = outputs['out_y'][0].cpu().numpy()
-        out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
-        print(vocab)
-        for game in range(imgs.shape[0]):
-            for sample in range(out_langs.shape[0]):
-                np.savetxt('../output/s0_sample_ref_game_'+str(game)+'_sample_'+str(sample)+'_outlang.txt', out_langs[sample][game])
-        np.savetxt('../output/s0_sample_ref_outy.txt', out_ys)
-        np.savetxt('../output/s0_sample_ref_outscore.txt', out_scores)
+        listener = torch.load('pretrained_listener2_small.pt')
+        for (file, output_file) in zip(files,output_files):
+            metrics, outputs = run(epoch, [file], 'val', 'sample', speaker, listener, optimizer, loss, num_samples = 5, get_outputs = True)
+            imgs = outputs['img'][0]
+            ys = outputs['y'][0].cpu().numpy()
+            langs = outputs['lang'][0].cpu().numpy()
+            out_langs = outputs['out_lang'][0].cpu().numpy()
+            out_ys = outputs['out_y'][0].cpu().numpy()
+            out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
+            for game in range(out_langs.shape[1]):
+                for sample in range(out_langs.shape[0]):
+                    np.savetxt(output_file+'game_'+str(game)+'srr_sample_'+str(sample)+'_lang.txt', out_langs[sample][game])
+            np.savetxt(output_file+'srr_y.txt', out_ys)
+            np.savetxt(output_file+'srr_score.txt', out_scores)
+            print('srr')
+            print(metrics)
             
-        """
         speaker = torch.load('speaker.pt')
         listener = torch.load('listener.pt')
-        _, outputs = run(epoch, outputs_data_file, 'val', 'pragmatic', speaker, listener, optimizer, loss, get_outputs = True)
-        imgs = outputs['img'][0].cpu().numpy()
-        ys = outputs['y'][0].cpu().numpy()
-        langs = outputs['lang'][0].cpu().numpy()
-        out_langs = outputs['out_lang'][0].cpu().numpy()
-        out_ys = outputs['out_y'][0].cpu().numpy()
-        out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
-        for game in range(imgs.shape[0]):
-            np.savetxt('../output/pragmatic_ref_game_'+str(game)+'_sample_'+str(sample)+'_outlang.txt', out_langs[game])
-        
-        np.savetxt('../output/pragmatic_ref_outy.txt', out_ys)
-        np.savetxt('../output/pragmatic_ref_outscore.txt', out_scores)
+        for (file, output_file) in zip(files,output_files):
+            metrics, outputs = run(epoch, [file], 'val', 'pragmatic', speaker, listener, optimizer, loss, get_outputs = True)
+            imgs = outputs['img'][0]
+            ys = outputs['y'][0].cpu().numpy()
+            langs = outputs['lang'][0].cpu().numpy()
+            out_langs = outputs['out_lang'][0].cpu().numpy()
+            out_ys = outputs['out_y'][0].cpu().numpy()
+            out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
+            for game in range(out_langs.shape[0]):
+                np.savetxt(output_file+'game_'+str(game)+'cotrained_lang.txt', out_langs[game])
+            np.savetxt(output_file+'cotrained_y.txt', out_ys)
+            np.savetxt(output_file+'cotrained_score.txt', out_scores)
+            print('cotrained')
+            print(metrics)
             
         speaker = torch.load('pretrained_speaker.pt')
-        listener = torch.load('pretrained_listener.pt')
-        _, outputs = run(epoch, outputs_data_file, 'val', 'pragmatic', speaker, listener, optimizer, loss, get_outputs = True)
-        imgs = outputs['img'][0].cpu().numpy()
-        ys = outputs['y'][0].cpu().numpy()
-        langs = outputs['lang'][0].cpu().numpy()
-        out_langs = outputs['out_lang'][0].cpu().numpy()
-        out_ys = outputs['out_y'][0].cpu().numpy()
-        out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
-        for game in range(imgs.shape[0]):
-            np.savetxt('../output/pretrained_pragmatic_ref_game_'+str(game)+'_sample_'+str(sample)+'_outlang.txt', out_langs[game])
-        np.savetxt('../output/pretrained_pragmatic_ref_outy.txt', out_ys)
-        np.savetxt('../output/pretrained_pragmatic_ref_outscore.txt', out_scores)
-        """
+        listener = torch.load('pretrained_listener2_small.pt')
+        for (file, output_file) in zip(files,output_files):
+            metrics, outputs = run(epoch, [file], 'val', 'pragmatic', speaker, listener, optimizer, loss, get_outputs = True)
+            imgs = outputs['img'][0]
+            ys = outputs['y'][0].cpu().numpy()
+            langs = outputs['lang'][0].cpu().numpy()
+            out_langs = outputs['out_lang'][0].cpu().numpy()
+            out_ys = outputs['out_y'][0].cpu().numpy()
+            out_scores = np.round(outputs['out_scores'][0].cpu().numpy(), 3)
+            for game in range(out_langs.shape[0]):
+                np.savetxt(output_file+'game_'+str(game)+'pretrained_lang.txt', out_langs[game])
+            np.savetxt(output_file+'pretrained_y.txt', out_ys)
+            np.savetxt(output_file+'pretrained_score.txt', out_scores)
+            print('pretrained')
+            print(metrics)
             
     else:
         # Pretrain
-        if args.pretrain or args.s0:
+        if args.lm:
+            if args.new:
+                for epoch in range(args.epochs):
+                    # Train
+                    data_file = args.pretrain_data_file[0:len(args.pretrain_data_file)-1]
+                    train_metrics, _ = run(epoch, data_file, 'train', 'lm', language_model, listener, optimizer, loss)
+                    # Validation
+                    data_file = [args.pretrain_data_file[-1]]
+                    val_metrics, _ = run(epoch, data_file, 'val', 'lm', language_model, listener, optimizer, loss)
+
+                    # Update metrics, prepending the split name
+                    for metric, value in train_metrics.items():
+                        metrics['train_{}'.format(metric)].append(value)
+                    for metric, value in val_metrics.items():
+                        metrics['val_{}'.format(metric)].append(value)
+                    metrics['current_epoch'] = epoch
+
+                    # Use validation accuracy to choose the best model
+                    is_best = val_metrics['acc'] > metrics['best_acc']
+                    if is_best:
+                        metrics['best_acc'] = val_metrics['acc']
+                        metrics['best_loss'] = val_metrics['loss']
+                        metrics['best_epoch'] = epoch
+                        best_language_model = copy.deepcopy(language_model)
+
+                    print(epoch)
+                    print(metrics)
+                # Save the best model
+                language_model = best_language_model
+                torch.save(language_model, 'language_model.pt')
+            else:
+                language_model = torch.load('language_model.pt')
+                language_model.eval()
+                context = torch.no_grad()  # Do not evaluate gradients for efficiency
+                """
+                with context:
+                    for file in args.train_data_file:
+                        d = data.load_raw_data(file)
+                        dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=args.batch_size, shuffle=True)
+                        for batch_i, (img, y, lang) in enumerate(dataloader):
+                            max_len = 20
+                            length = torch.tensor([np.count_nonzero(t) for t in lang.cpu()], dtype=np.int)
+                            lang = F.one_hot(lang, num_classes = 4+len(VOCAB))
+                            lang = F.pad(lang,(0,0,0,max_len-lang.shape[1])).float()
+                            for B in range(lang.shape[0]):
+                                for L in range(lang.shape[1]):
+                                    if lang[B][L].sum() == 0:
+                                        lang[B][L][0] = 1
+                                        
+                            prob = language_model.probability(lang,length)
+                 """
+        if args.pretrain or args.srr:
             if args.new:
                 for epoch in range(args.epochs):
                     # Train
@@ -539,41 +585,38 @@ if __name__ == '__main__':
                     print(epoch)
                 # Save the best model
                 listener = best_listener
-                torch.save(listener, 'pretrained_listener.pt')
+                torch.save(listener, 'pretrained_listener2_small.pt')
             else:
-                listener = torch.load('pretrained_listener.pt')
+                listener = torch.load('pretrained_listener_small.pt')
+                listener_eval = torch.load('pretrained_listener2_small.pt')
 
         # Train
-        if args.s0:
-            if args.new:
-                for epoch in range(args.epochs):
-                    # Train
-                    train_metrics, _ = run(epoch, args.train_data_file, 'train', 'literal', speaker, listener, optimizer, loss, game_type = args.game_type)
-                    # Validation
-                    val_metrics, _ = run(epoch, args.val_data_file, 'val', 'literal', speaker, listener, optimizer, loss, game_type = args.game_type)
+        if args.srr:
+            for epoch in range(args.epochs):
+                # Train
+                train_metrics, _ = run(epoch, args.train_data_file, 'train', 'literal', speaker, listener, optimizer, loss, game_type = args.game_type)
+                # Validation
+                val_metrics, _ = run(epoch, args.val_data_file, 'val', 'literal', speaker, listener, optimizer, loss, game_type = args.game_type)
 
-                    # Update metrics, prepending the split name
-                    for metric, value in train_metrics.items():
-                        metrics['train_{}'.format(metric)].append(value)
-                    for metric, value in val_metrics.items():
-                        metrics['val_{}'.format(metric)].append(value)
-                    metrics['current_epoch'] = epoch
+                # Update metrics, prepending the split name
+                for metric, value in train_metrics.items():
+                    metrics['train_{}'.format(metric)].append(value)
+                for metric, value in val_metrics.items():
+                    metrics['val_{}'.format(metric)].append(value)
+                metrics['current_epoch'] = epoch
 
-                    # Use validation accuracy to choose the best model
-                    is_best = val_metrics['acc'] > metrics['best_acc']
-                    if is_best:
-                        metrics['best_acc'] = val_metrics['acc']
-                        metrics['best_loss'] = val_metrics['loss']
-                        metrics['best_epoch'] = epoch
-                        best_speaker = copy.deepcopy(speaker)
-                        
-                    print(epoch)
-                # Save the best model
-                speaker = best_speaker
-                torch.save(speaker, 'literal_speaker.pt')
-            else:
-                epoch = 0
-                speaker = torch.load('literal_speaker.pt')
+                # Use validation accuracy to choose the best model
+                is_best = val_metrics['acc'] > metrics['best_acc']
+                if is_best:
+                    metrics['best_acc'] = val_metrics['acc']
+                    metrics['best_loss'] = val_metrics['loss']
+                    metrics['best_epoch'] = epoch
+                    best_speaker = copy.deepcopy(speaker)
+
+                print(epoch)
+            # Save the best model
+            speaker = best_speaker
+            torch.save(speaker, 'literal_speaker.pt')
             
             # Sample and rerank
             test_metrics, _ = run(epoch, args.val_data_file, 'val', 'sample', speaker, listener, optimizer, loss, game_type = args.game_type, num_samples = 10)
@@ -583,7 +626,10 @@ if __name__ == '__main__':
                 # Train
                 train_metrics, _ = run(epoch, args.train_data_file, 'train', 'pragmatic', speaker, listener, optimizer, loss, args.game_type)
                 # Validation
-                val_metrics, _ = run(epoch, args.val_data_file, 'val', 'pragmatic', speaker, listener, optimizer, loss, args.game_type)
+                if args.pretrain:
+                    val_metrics, _ = run(epoch, args.val_data_file, 'val', 'pragmatic', speaker, listener_eval, optimizer, loss, args.game_type)
+                else:
+                    val_metrics, _ = run(epoch, args.val_data_file, 'val', 'pragmatic', speaker, listener, optimizer, loss, args.game_type)
 
                 # Update metrics, prepending the split name
                 for metric, value in train_metrics.items():
@@ -600,8 +646,9 @@ if __name__ == '__main__':
                     metrics['best_epoch'] = epoch
                     best_speaker = copy.deepcopy(speaker)
                     best_listener = copy.deepcopy(listener)
-                    
+               
                 print(epoch)
+                print(metrics)
             # Save the best model
             if args.pretrain:
                 torch.save(best_speaker, 'pretrained_speaker.pt')
