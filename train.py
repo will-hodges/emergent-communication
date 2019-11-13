@@ -77,12 +77,10 @@ def compute_average_metrics(meters):
     """
     Compute averages from meters. Handle tensors vs floats (always return a
     float)
-
     Parameters
     ----------
     meters : Dict[str, util.AverageMeter]
         Dict of average meters, whose averages may be of type ``float`` or ``torch.Tensor``
-
     Returns
     -------
     metrics : Dict[str, float]
@@ -98,7 +96,6 @@ def compute_average_metrics(meters):
 def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, game_type = 'reference', num_samples = 5, get_outputs = False, srr = True):
     """
     Run the model for a single epoch.
-
     Parameters
     ----------
     split : ``str``
@@ -121,7 +118,6 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
     random_state : ``np.random.RandomState``
         The numpy random state in case anything stochastic happens during the
         run
-
     Returns
     -------
     metrics : ``dict[str, float]``
@@ -150,7 +146,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
         context = torch.no_grad()  # Do not evaluate gradients for efficiency
 
     # Initialize your average meters to keep track of the epoch's running average
-    measures = ['loss', 'acc']
+    measures = ['loss', 'lm loss', 'acc']
     meters = {m: util.AverageMeter() for m in measures}
 
     with context:
@@ -230,10 +226,14 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                         # SGD step
                         this_loss.backward()
                         optimizer.step()
-                    
+                        
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
                 elif run_type == 'literal' or run_type == 'lm':
+                    lang_length = torch.tensor([np.count_nonzero(t) for t in hypo_out.argmax(2).cpu()], dtype=np.int)
+                    lm_seq = language_model(hypo_out,lang_length)[:, :-1].contiguous()
+                    seq_prob = loss(lm_seq.view(batch_size * lm_seq.size(1),4+len(VOCAB)).cuda(), torch.max(lang.cuda()[:, 1:].contiguous().long().view(batch_size * lm_seq.size(1),4+len(VOCAB)),1)[1])
+                    
                     hint_seq = lang.cuda()
                     hypo_out = hypo_out[:, :-1].contiguous()
                     hint_seq = hint_seq[:, 1:].contiguous()
@@ -251,6 +251,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                         
                     hypo_acc = (hypo_out_2d.argmax(1)==hint_seq_2d.argmax(1)).float().mean().item()
 
+                    meters['lm loss'].update(seq_prob, batch_size)
                     meters['loss'].update(hypo_loss, batch_size)
                     meters['acc'].update(hypo_acc, batch_size)
                     outputs = [hypo_out_2d.argmax(1),hint_seq_2d.argmax(1)]
@@ -261,6 +262,9 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                             best_lis_pred = torch.zeros(batch_size)
                             best_correct = torch.zeros(batch_size)
                             best_this_acc = torch.zeros(batch_size)
+                            best_lang = lang
+                            best_lang_length = lang_length
+                            
                             for lang, lang_length in zip(langs, lang_lengths):
                                 lis_scores = listener(img, lang, lang_length)
                                 lis_pred = lis_scores.argmax(1)
@@ -273,8 +277,13 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                                         best_lis_pred[game] = lis_pred[game]
                                         best_correct[game] = correct[game]
                                         best_this_acc[game] = this_acc
+                                        best_lang[game] = lang[game]
+                                        best_lang_length[game] = lang_length[game]
                              
                             # Evaluate loss and accuracy
+                            lm_seq = language_model(best_lang,best_lang_length)[:, :-1].contiguous()
+                            seq_prob = loss(lm_seq.view(batch_size * lm_seq.size(1),4+len(VOCAB)).cuda(), torch.max(lang.cuda()[:, 1:].contiguous().long().view(batch_size * lm_seq.size(1),4+len(VOCAB)),1)[1])
+                            
                             this_loss = loss(best_lis_scores.cuda(), y.long())
                             this_acc = best_correct[game].float().mean().item()
                             
@@ -283,6 +292,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                                 this_loss.backward()
                                 optimizer.step()
                             
+                            meters['lm loss'].update(seq_prob, batch_size)
                             meters['loss'].update(this_loss, batch_size)
                             meters['acc'].update(this_acc, batch_size)
                             
@@ -298,9 +308,11 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                             # Evaluate loss and accuracy
                             lm_seq = language_model(lang,lang_length)[:, :-1].contiguous()
                             seq_prob = loss(lm_seq.view(batch_size * lm_seq.size(1),4+len(VOCAB)).cuda(), torch.max(lang.cuda()[:, 1:].contiguous().long().view(batch_size * lm_seq.size(1),4+len(VOCAB)),1)[1])
-                            #print(eos_loss)
-                            #print(seq_prob)
-                            this_loss = loss(lis_scores, y.long())+seq_prob.detach()*0.01
+                            
+                            if run_type == 'pretrain':
+                                this_loss = loss(lis_scores, y.long())+seq_prob.detach()*0.005
+                            else:
+                                this_loss = loss(lis_scores, y.long())
                             lis_pred = lis_scores.argmax(1)
                             correct = (lis_pred == y)
                             this_acc = correct.float().mean().item()
@@ -310,32 +322,14 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, g
                                 this_loss.backward()
                                 optimizer.step()
 
-                            meters['loss'].update(this_loss, batch_size)
+                            meters['lm loss'].update(seq_prob, batch_size)
+                            if run_type == 'pretrain':
+                                meters['loss'].update(this_loss-seq_prob.detach()*0.005, batch_size)
+                            else:
+                                meters['loss'].update(this_loss, batch_size)
                             meters['acc'].update(this_acc, batch_size)
-                            
-                            """
-                            if batch_i == 0:
-                                print(lang.reshape(lang.shape[0]*lang.shape[1],-1).argmax(1).reshape(lang.shape[0],lang.shape[1])[0:3])
-                                print(lang_length)
-                                print('loss')
-                                print(this_loss)
-                                print('no length')
-                                print(loss(lis_scores, y.long()))
-                                print('acc')
-                                print(this_acc)
-                            """
+
                             if get_outputs:
-                                hypo_out = language_model(lang,lang_length)
-                                hint_seq = lang.cuda()
-                                hypo_out = hypo_out[:, :-1].contiguous()
-                                hint_seq = hint_seq[:, 1:].contiguous()
-
-                                seq_len = hypo_out.size(1)
-
-                                hypo_out_2d = hypo_out.view(batch_size * seq_len, 4+len(VOCAB))
-                                hint_seq_2d = hint_seq.long().view(batch_size * seq_len, 4+len(VOCAB))
-                                hypo_loss = loss(hypo_out_2d.cuda(), torch.max(hint_seq_2d, 1)[1])
-                                print(hypo_loss)
                                 outputs['out_y'].append(lis_pred)
                                 outputs['out_scores'].append(lis_scores)
                     if game_type == 'concept':
@@ -614,6 +608,7 @@ if __name__ == '__main__':
                     best_speaker = copy.deepcopy(speaker)
 
                 print(epoch)
+                print(metrics)
             # Save the best model
             speaker = best_speaker
             torch.save(speaker, 'literal_speaker.pt')
@@ -653,6 +648,6 @@ if __name__ == '__main__':
             if args.pretrain:
                 torch.save(best_speaker, 'pretrained_speaker.pt')
             else:
-                torch.save(best_speaker, 'speaker.pt')
-                torch.save(best_listener, 'listener.pt')
+                torch.save(best_speaker, 'speaker_nolm.pt')
+                torch.save(best_listener, 'listener_nolm.pt')
         print(metrics)
