@@ -241,6 +241,7 @@ class LiteralSpeaker(nn.Module):
         output_2d = output.view(batch_size * max_length, -1)
         outputs_2d = self.outputs2vocab(output_2d)
         lang_tensor = outputs_2d.view(batch_size, max_length, self.vocab_size)
+        
         return lang_tensor
     
     def sample(self, feats, y, greedy=False):
