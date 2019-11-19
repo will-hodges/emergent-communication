@@ -135,7 +135,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, v
                         torch.load('pretrained-listener-10.pt')]
         for ci_listener in ci_listeners:
             ci_listener.eval()
-        meters = {'loss':[], 'acc':[], 'prob':[], 'perp':[], 'CI low':[], 'CI high':[]}
+        meters = {'loss':[], 'acc':[], 'prob':[], 'perp':[], 'CI':[]}
     else:
         measures = ['loss', 'acc']
         meters = {m: util.AverageMeter() for m in measures}
@@ -283,25 +283,23 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, v
                                 """
                                 lm_seq = language_model(lang,lang_length)[:, :-1].contiguous()
                                 temp_prob = loss2(lm_seq.view(batch_size*lm_seq.size(1),4+len(VOCAB)).cuda(),torch.max(lang.cuda()[:,1:].contiguous().long().view(batch_size*lm_seq.size(1),4+len(VOCAB)),1)[1])
-                                print(temp_prob)
                                 temp_prob = temp_prob.view(batch_size,lm_seq.size(1))
                                 seq_prob = []
+                                log_prob = []
                                 for i,prob in enumerate(temp_prob):
-                                    seq_prob.append(1)
+                                    log_prob.append(1)
                                     for j in range(lang_length[i].int()-1):
-                                        seq_prob[-1] += prob[j]
+                                        log_prob[-1] += prob[j]
+                                    seq_prob.append(math.exp(-log_prob[-1]))
                                 seq_prob = torch.tensor(seq_prob).mean().numpy()
-                                seq_perp = math.exp(-seq_prob)
+                                log_prob = torch.tensor(log_prob).mean().numpy()
+                                seq_perp = math.exp(log_prob)
                                 
-                                low_acc = 1
-                                high_acc = 0
+                                ci = []
                                 for ci_listener in ci_listeners:
                                     correct = (ci_listener(img,lang,lang_length).argmax(1) == y)
                                     acc = correct.float().mean().item()
-                                    if low_acc>acc:
-                                        low_acc = acc
-                                    if high_acc<acc:
-                                        high_acc = acc
+                                    ci.append(acc)
                                 this_loss = this_loss.cpu().numpy()
                                 
                                 outputs['lang'].append(lang.argmax(2))
@@ -311,8 +309,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, v
                                 meters['acc'].append(this_acc)
                                 meters['prob'].append(seq_prob)
                                 meters['perp'].append(seq_perp)
-                                meters['CI low'].append(low_acc)
-                                meters['CI high'].append(high_acc)
+                                meters['CI'].append(ci)
                             else:
                                 meters['loss'].update(this_loss, batch_size)
                                 meters['acc'].update(this_acc, batch_size)
@@ -347,22 +344,21 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, v
                                 temp_prob = loss2(lm_seq.view(batch_size*lm_seq.size(1),4+len(VOCAB)).cuda(),torch.max(lang.cuda()[:,1:].contiguous().long().view(batch_size*lm_seq.size(1),4+len(VOCAB)),1)[1])
                                 temp_prob = temp_prob.view(batch_size,lm_seq.size(1))
                                 seq_prob = []
+                                log_prob = []
                                 for i,prob in enumerate(temp_prob):
-                                    seq_prob.append(1)
+                                    log_prob.append(1)
                                     for j in range(lang_length[i].int()-1):
-                                        seq_prob[-1] += prob[j]
+                                        log_prob[-1] += prob[j]
+                                    seq_prob.append(math.exp(-log_prob[-1]))
                                 seq_prob = torch.tensor(seq_prob).mean().numpy()
-                                seq_perp = math.exp(-seq_prob)
+                                log_prob = torch.tensor(log_prob).mean().numpy()
+                                seq_perp = math.exp(log_prob)
                                 
-                                low_acc = 1
-                                high_acc = 0
+                                ci = []
                                 for ci_listener in ci_listeners:
                                     correct = (ci_listener(img,lang,lang_length).argmax(1) == y)
                                     acc = correct.float().mean().item()
-                                    if low_acc>acc:
-                                        low_acc = acc
-                                    if high_acc<acc:
-                                        high_acc = acc
+                                    ci.append(acc)
                                 this_loss = this_loss.cpu().numpy()
                                 
                                 outputs['lang'].append(lang.argmax(2))
@@ -372,8 +368,7 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, v
                                 meters['acc'].append(this_acc)
                                 meters['prob'].append(seq_prob)
                                 meters['perp'].append(seq_perp)
-                                meters['CI low'].append(low_acc)
-                                meters['CI high'].append(high_acc)
+                                meters['CI'].append(ci)
                             else:
                                 meters['loss'].update(this_loss, batch_size) #-prob*0.5, batch_size) #-seq_prob.detach()*0.005, batch_size) #-eos_prob*0.01, batch_size)
                                 meters['acc'].update(this_acc, batch_size)

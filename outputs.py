@@ -37,6 +37,7 @@ loss = nn.CrossEntropyLoss()
 metrics = init_metrics()
 
 if get_inputs:
+    
     directories = ['random','both-needed','color-needed','shape-needed','either-ok']
     for directory in directories:
         d = data.load_raw_data('./data/single/'+str(directory)+'/reference-1000.npz')
@@ -48,8 +49,10 @@ if get_inputs:
                 plt.imsave('./output/'+str(directory)+'/game-'+str(game-990)+'-img-3.png', img[0][2].permute(1,2,0).cpu().numpy())
                 np.savetxt('./output/'+str(directory)+'/game-'+str(game-990)+'-y.txt', y)
                 np.savetxt('./output/'+str(directory)+'/game-'+str(game-990)+'-lang.txt', lang)
-else:          
-    batch_size = 10
+                
+else:        
+    
+    batch_size = 100
     files = ['./data/single/random/reference-1000.npz','./data/single/both-needed/reference-1000.npz','./data/single/shape-needed/reference-1000.npz','./data/single/color-needed/reference-1000.npz', './data/single/either-ok/reference-1000.npz']
     output_files = ['./output/random/','./output/both-needed/','./output/shape-needed/','./output/color-needed/','./output/either-ok/']
     epoch = 0
@@ -62,10 +65,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_s_val_lang.txt', langs[game])
-        np.savetxt(output_file+'s_val_pred.txt', preds)
-        np.savetxt(output_file+'s_val_score.txt', scores)
+        np.savetxt(output_file+'s_val_pred.txt', preds[90:])
+        np.savetxt(output_file+'s_val_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'s_val_metrics.npy', metrics) 
 
@@ -77,10 +80,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_srr5_val_lang.txt', langs[game])
-        np.savetxt(output_file+'srr5_val_pred.txt', preds)
-        np.savetxt(output_file+'srr5_val_score.txt', scores)
+        np.savetxt(output_file+'srr5_val_pred.txt', preds[90:])
+        np.savetxt(output_file+'srr5_val_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'srr5_val_metrics.npy', metrics) 
     print('sample/rerank (10) val')
@@ -91,10 +94,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_srr10_val_lang.txt', langs[game])
-        np.savetxt(output_file+'srr10_val_pred.txt', preds)
-        np.savetxt(output_file+'srr10_val_score.txt', scores)
+        np.savetxt(output_file+'srr10_val_pred.txt', preds[90:])
+        np.savetxt(output_file+'srr10_val_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'srr10_val_metrics.npy', metrics) 
     print('sample/rerank (20) val')
@@ -105,10 +108,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_srr20_val_lang.txt', langs[game])
-        np.savetxt(output_file+'srr20_val_pred.txt', preds)
-        np.savetxt(output_file+'srr20_val_score.txt', scores)
+        np.savetxt(output_file+'srr20_val_pred.txt', preds[90:])
+        np.savetxt(output_file+'srr20_val_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'srr20_val_metrics.npy', metrics) 
 
@@ -120,10 +123,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_pretrained_val_lang.txt', langs[game])
-        np.savetxt(output_file+'pretrained_val_pred.txt', preds)
-        np.savetxt(output_file+'pretrained_val_score.txt', scores)
+        np.savetxt(output_file+'pretrained_val_pred.txt', preds[90:])
+        np.savetxt(output_file+'pretrained_val_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'pretrained_val_metrics.npy', metrics) 
 
@@ -135,10 +138,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_s_train_lang.txt', langs[game])
-        np.savetxt(output_file+'s_train_pred.txt', preds)
-        np.savetxt(output_file+'s_train_score.txt', scores)
+        np.savetxt(output_file+'s_train_pred.txt', preds[90:])
+        np.savetxt(output_file+'s_train_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'s_train_metrics.npy', metrics) 
 
@@ -150,10 +153,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_srr5_train_lang.txt', langs[game])
-        np.savetxt(output_file+'srr5_train_pred.txt', preds)
-        np.savetxt(output_file+'srr5_train_score.txt', scores)
+        np.savetxt(output_file+'srr5_train_pred.txt', preds[90:])
+        np.savetxt(output_file+'srr5_train_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'srr5_train_metrics.npy', metrics)
     print('sample/rerank (10) train')
@@ -164,10 +167,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_srr10_train_lang.txt', langs[game])
-        np.savetxt(output_file+'srr10_train_pred.txt', preds)
-        np.savetxt(output_file+'srr10_train_score.txt', scores)
+        np.savetxt(output_file+'srr10_train_pred.txt', preds[90:])
+        np.savetxt(output_file+'srr10_train_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'srr10_train_metrics.npy', metrics) 
     print('sample/rerank (20) train')
@@ -178,10 +181,10 @@ else:
         preds = outputs['pred'][-1].cpu().numpy()
         scores = outputs['score'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_srr20_train_lang.txt', langs[game])
-        np.savetxt(output_file+'srr20_train_pred.txt', preds)
-        np.savetxt(output_file+'srr20_train_score.txt', scores)
+        np.savetxt(output_file+'srr20_train_pred.txt', preds[90:])
+        np.savetxt(output_file+'srr20_train_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'srr20_train_metrics.npy', metrics) 
 
@@ -193,9 +196,9 @@ else:
         scores = outputs['score'][-1].cpu().numpy()
         preds = outputs['pred'][-1].cpu().numpy()
         langs = outputs['lang'][-1].cpu().numpy()
-        for game in range(langs.shape[0]):
+        for game in range(90,langs.shape[0]):
             np.savetxt(output_file+'game_'+str(game)+'_pretrained_train_lang.txt', langs[game])
-        np.savetxt(output_file+'pretrained_train_pred.txt', preds)
-        np.savetxt(output_file+'pretrained_train_score.txt', scores)
+        np.savetxt(output_file+'pretrained_train_pred.txt', preds[90:])
+        np.savetxt(output_file+'pretrained_train_score.txt', scores[90:])
         print(metrics)
         np.save(output_file+'pretrained_train_metrics.npy', metrics) 
