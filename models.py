@@ -76,7 +76,7 @@ class Speaker(nn.Module):
 
         return ft_concat
 
-    def forward(self, feats, targets, greedy=False, max_len=20):
+    def forward(self, feats, targets, greedy=False, length_penalty=False, max_len=20):
         """Sample from image features"""
         batch_size = feats.size(0)
 
@@ -131,8 +131,9 @@ class Speaker(nn.Module):
                 predicted_onehot = F.gumbel_softmax(outputs, tau=1, hard=True)
                 # Add to lang
                 lang.append(predicted_onehot.unsqueeze(1))
-                idx_prob = F.log_softmax(outputs, dim = 1)
-                eos_prob.append(idx_prob[:,data.EOS_IDX])
+                if length_penalty:
+                    idx_prob = F.log_softmax(outputs, dim = 1)
+                    eos_prob.append(idx_prob[:,data.EOS_IDX])
 
             predicted_npy = predicted_onehot.argmax(1).cpu().numpy()
             
@@ -150,6 +151,7 @@ class Speaker(nn.Module):
         eos_onehot = torch.zeros(batch_size, 1, self.vocab_size).to(feats.device)
         eos_onehot[:, 0, data.EOS_IDX] = 1.0
         lang.append(eos_onehot)
+        
         # Cut off the rest of the sentences
         for i, _ in enumerate(predicted_npy):
             if not done_sampling[i]:
@@ -165,15 +167,18 @@ class Speaker(nn.Module):
         max_lang_len = lang_length.max()
         lang_tensor = lang_tensor[:, :max_lang_len, :]
         
-        # eos prob -> eos loss
-        eos_prob = torch.stack(eos_prob, dim = 1)
-        for i in range(eos_prob.shape[0]):
-            r_len = torch.arange(1,eos_prob.shape[1]+1,dtype=torch.float32)
-            eos_prob[i] = eos_prob[i]*r_len.to(eos_prob.device)
-            eos_prob[i,lang_length[i]:] = 0
-        eos_loss = -eos_prob
-        eos_loss = eos_loss.sum(1)/lang_length.float()
-        eos_loss = eos_loss.mean()
+        if length_penalty:
+            # eos prob -> eos loss
+            eos_prob = torch.stack(eos_prob, dim = 1)
+            for i in range(eos_prob.shape[0]):
+                r_len = torch.arange(1,eos_prob.shape[1]+1,dtype=torch.float32)
+                eos_prob[i] = eos_prob[i]*r_len.to(eos_prob.device)
+                eos_prob[i,lang_length[i]:] = 0
+            eos_loss = -eos_prob
+            eos_loss = eos_loss.sum(1)/lang_length.float()
+            eos_loss = eos_loss.mean()
+        else:
+            eos_loss = 0
         
         return lang_tensor, lang_length, eos_loss
 
@@ -217,13 +222,13 @@ class LiteralSpeaker(nn.Module):
 
         feats = feats.unsqueeze(0)
         # reorder from (B,L,D) to (L,B,D)
-        seq = seq.transpose(0, 1)
+        seq = seq.transpose(0, 1).to(feats.device)
 
         # embed your sequences
-        embed_seq = seq.cuda() @ self.embedding.weight
+        embed_seq = seq @ self.embedding.weight
         
         # embed features
-        feats_emb = self.feat_model(feats.squeeze().cuda())
+        feats_emb = self.feat_model(feats.squeeze().to(feats.device))
         feats_emb = self.init_h(feats_emb)
         feats_emb = feats_emb.unsqueeze(0)
         
@@ -252,8 +257,8 @@ class LiteralSpeaker(nn.Module):
             # initialize hidden states using image features
             #states = feats.unsqueeze(0)
             feats = torch.from_numpy(np.array([np.array(feat[y[idx],:,:,:].cpu()) for idx, feat in enumerate(feats)]))
-            feats = feats.unsqueeze(0)
-            feats_emb = self.feat_model(feats.squeeze().cuda())
+            feats = feats.unsqueeze(0).to(y.device)
+            feats_emb = self.feat_model(feats.squeeze())
             feats_emb = self.init_h(feats_emb)
             states = feats_emb.unsqueeze(0)
 
@@ -271,10 +276,10 @@ class LiteralSpeaker(nn.Module):
             sampled = np.transpose(sampled, (1, 0, 2))
 
             # (B,L,D) to (L,B,D)
-            inputs = inputs.transpose(0,1)
+            inputs = inputs.transpose(0,1).to(feats.device)
 
             # compute embeddings
-            inputs = inputs.cuda() @ self.embedding.weight
+            inputs = inputs @ self.embedding.weight
 
             for i in range(max_len-1):
                 outputs, states = self.gru(inputs, states)  # outputs: (L=1,B,H)
@@ -290,7 +295,7 @@ class LiteralSpeaker(nn.Module):
                     
                 predicted = predicted.transpose(0, 1)        # inputs: (L=1,B)
                 predicted = F.one_hot(predicted, num_classes=4+len(VOCAB)).float()
-                inputs = predicted.cuda() @ self.embedding.weight             # inputs: (L=1,B,E)
+                inputs = predicted.to(feats.device) @ self.embedding.weight             # inputs: (L=1,B,E)
                 
                 sampled = np.concatenate((sampled,predicted),axis = 0)
             
@@ -364,7 +369,8 @@ class LanguageModel(nn.Module):
 
                 idx_prob = F.log_softmax(outputs,dim=1).cpu().numpy()
                 for j,k in enumerate(seq[i].argmax(1)):
-                    prob[j] = prob[j]+idx_prob[j,k]
+                    if k != 0:
+                        prob[j] = prob[j]+idx_prob[j,k]
         return prob
     
 class RNNEncoder(nn.Module):

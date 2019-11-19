@@ -25,6 +25,7 @@ TWOFIVEFIVE = np.float32(255)
 
 SHAPES = ['circle', 'square', 'rectangle', 'ellipse']
 COLORS = ['red', 'blue', 'green', 'yellow', 'white', 'gray']
+VOCAB = ['gray', 'shape', 'blue', 'square', 'circle', 'green', 'red', 'rectangle', 'yellow', 'ellipse', 'white']
 BRUSHES = {c: aggdraw.Brush(c) for c in COLORS}
 PENS = {c: aggdraw.Pen(c) for c in COLORS}
 
@@ -440,7 +441,7 @@ def generate_spatial(mp_args):
     Generate a single image
     """
     random.seed()
-    n_images, correct, i, data_type = mp_args
+    n_images, correct, i, data_type, context = mp_args
     # Get shapes and relations
     imgs = np.zeros((n_images, 64, 64, 3), dtype=np.uint8)
     labels = np.zeros((n_images, ), dtype=np.uint8)
@@ -511,19 +512,28 @@ def invalidate_single(config):
 
 def generate_single(mp_args):
     random.seed()
-    n_images, correct, i, data_type = mp_args
+    n_images, correct, i, data_type, context = mp_args
     imgs = np.zeros((n_images, 64, 64, 3), dtype=np.uint8)
     labels = np.zeros((n_images, ), dtype=np.uint8)
     config = random_config_single()
+    if context != None:
+        is_none = True
+        while is_none:
+            target_color, target_shape = config
+            if target_color is None or target_shape is None:
+                config = random_config_single()
+            else:
+                is_none = False
     if data_type == 'concept':
         n_target = 2
         n_distract = 2
     else:
         n_target = 1
         n_distract = n_images  # Never run out of distractors
-    idx_rand = list(range(n_images))
-    # random.shuffle(idx_rand)
-    for w_idx in idx_rand:
+    idx = list(range(n_images))
+    shapes = []
+    colors = []
+    for w_idx in idx:
         if n_target > 0:
             label = 1
             n_target -= 1
@@ -534,10 +544,60 @@ def generate_single(mp_args):
             label = (random.random() < correct)
         new_config = config if label else invalidate_single(config)
 
-        color, shape_ = new_config
+        color_, shape_ = new_config
         if shape_ is None:
             shape_ = random_shape()
-        shape = SHAPE_IMPLS[shape_](color=color)
+            
+        if context != None:
+            target_color, target_shape = config
+            if label == 1:
+                shape_ = target_shape
+                color_ = target_color
+            if label == 0:
+                if context == 'shape':
+                    shape_ = target_shape
+                    same_color = True
+                    while same_color:
+                        color_ = random_color()
+                        if color_ != target_color:
+                            same_color = False
+                if context == 'color':
+                    color_ = target_color
+                    same_shape = True
+                    while same_shape:
+                        shape_ = random_shape()
+                        if shape_ != target_shape:
+                            same_shape = False
+                if context == 'both':
+                    if w_idx == 1:
+                        shape_ = target_shape
+                        same_color = True
+                        while same_color:
+                            color_ = random_color()
+                            if color_ != target_color:
+                                same_color = False
+                    elif w_idx == 2:
+                        color_ = target_color
+                        same_shape = True
+                        while same_shape:
+                            shape_ = random_shape()
+                            if shape_ != target_shape:
+                                same_shape = False
+                if context == 'none':
+                    same_color = True
+                    while same_color:
+                        color_ = random_color()
+                        if color_ != target_color:
+                            same_color = False
+                    same_shape = True
+                    while same_shape:
+                        shape_ = random_shape()
+                        if shape_ != target_shape:
+                            same_shape = False
+                            
+        shapes.append(shape_)
+        colors.append(color_)
+        shape = SHAPE_IMPLS[shape_](color=color_)
 
         # Create image and draw shape
         img = I()
@@ -557,7 +617,7 @@ def generate(n,
              pool=None,
              do_mp=True,
              verbose=False,
-             compress=True):
+             context=None):
     if not do_mp and pool is not None:
         raise ValueError("Can't specify pool if do_mp=True")
     if do_mp:
@@ -582,19 +642,18 @@ def generate(n,
     all_labels = np.zeros((n, n_images), dtype=np.uint8)
     configs = []
 
-    mp_args = [(n_images, correct, i, data_type) for i in range(n)]
-
+    mp_args = [(n_images, correct, i, data_type, context) for i in range(n)]
     if do_mp:
         gen_iter = pool.imap(img_func, mp_args)
     else:
         gen_iter = map(img_func, mp_args)
     if verbose:
         gen_iter = tqdm(gen_iter, total=n)
+    
     for imgs, labels, config, i in gen_iter:
         all_imgs[i, ] = imgs
         all_labels[i, ] = labels
         configs.append(config)
-
     if do_mp and pool_was_none:  # Remember to close the pool
         pool.close()
         pool.join()
@@ -603,9 +662,6 @@ def generate(n,
         all_imgs = np.divide(all_imgs, TWOFIVEFIVE)
         all_labels = all_labels.astype(np.float32)
     langs = np.array([fmt_config(c) for c in configs], dtype=np.unicode)
-    
-    if compress:
-        all_imgs = all_imgs.astype(np.bool)
     return {'imgs': all_imgs, 'labels': all_labels, 'langs': langs}
 
 
@@ -693,16 +749,12 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    data = generate(
-        args.n_examples, args.n_images, args.correct, verbose=True,
-        data_type=args.data_type,
-        img_func=IMG_FUNCS[args.img_type],
-        do_mp=not args.no_mp)
-
-    np.savez_compressed(args.out, **data)
-    # Confirm you can load
-    #  ShapeWorld.load(args.out)
-
-    #  if args.vis_dir is not None:
-        #  os.makedirs(args.vis_dir, exist_ok=True)
-        #  save_images('./test/', data)
+    files = ['./data/single/reference-1000-70.npz','./data/single/reference-1000-71.npz','./data/single/reference-1000-72.npz','./data/single/reference-1000-73.npz','./data/single/reference-1000-74.npz']
+    for file in files:
+        data = generate(
+            args.n_examples, args.n_images, args.correct, verbose=True,
+            data_type=args.data_type,
+            img_func=IMG_FUNCS[args.img_type],
+            do_mp=not args.no_mp,
+            context=None)
+        np.savez_compressed(file, **data)
