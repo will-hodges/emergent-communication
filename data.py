@@ -9,8 +9,8 @@ import shapeworld
 
 
 PAD_TOKEN = '<PAD>'
-SOS_TOKEN = '<s>'
-EOS_TOKEN = '</s>'
+SOS_TOKEN = '<sos>'
+EOS_TOKEN = '<eos>'
 UNK_TOKEN = '<UNK>'
 
 PAD_IDX = 0
@@ -81,21 +81,32 @@ def train_val_test_split(data,
 def load_raw_data(data_file):
     data = np.load(data_file)
     # Preprocessing/tokenization
-    return {
-        'imgs': data['imgs'].transpose(0, 1, 4, 2, 3),
-        'labels': data['labels'],
-        'langs': np.array([t.lower().split() for t in data['langs']])
-    }
+    try:
+        return {
+            'imgs': data['imgs'].transpose(0, 1, 4, 2, 3),
+            'labels': data['labels'],
+            'langs': np.array([t.lower().split() for t in data['langs']])
+        }
+    except:
+        return {
+            'imgs': data['imgs'],
+            'labels': data['labels'],
+            'langs': data['langs']
+        }
 
 class ShapeWorld:
     def __init__(self, data, vocab):
         self.imgs = data['imgs']
         self.labels = data['labels']
-        self.lang_raw = data['langs']
         # Get vocab
         self.w2i = vocab['w2i']
         self.i2w = vocab['i2w']
-        self.lang_idx, self.lang_len = self.to_idx(self.lang_raw)
+        if len(vocab['w2i']) > 100:
+            self.lang_raw = data['langs']
+            self.lang_idx = data['langs']
+        else:
+            self.lang_raw = data['langs']
+            self.lang_idx, self.lang_len = self.to_idx(self.lang_raw)
 
     def __len__(self):
         return len(self.lang_raw)

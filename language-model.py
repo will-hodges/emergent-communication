@@ -49,14 +49,21 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--lr', default=1e-3, type=int)
     parser.add_argument('--cuda', action='store_true')
+    parser.add_argument('--dataset', default='single')
     args = parser.parse_args()
     
-    language_model_data = ['./data/single/reference-1000-55.npz','./data/single/reference-1000-56.npz','./data/single/reference-1000-57.npz','./data/single/reference-1000-58.npz','./data/single/reference-1000-59.npz']
-    
+    if args.dataset == 'single':
+        language_model_data = ['./data/single/reference-1000-55.npz','./data/single/reference-1000-56.npz','./data/single/reference-1000-57.npz','./data/single/reference-1000-58.npz','./data/single/reference-1000-59.npz']
+    elif args.dataset == 'chairs':
+        language_model_data = ['./data/'+args.dataset+'/data_1000_0.npz','./data/'+args.dataset+'/data_1000_1.npz','./data/'+args.dataset+'/data_1000_2.npz','./data/'+args.dataset+'/data_1000_3.npz','./data/'+args.dataset+'/data_1000_4.npz','./data/'+args.dataset+'/data_1000_5.npz','./data/'+args.dataset+'/data_1000_6.npz','./data/'+args.dataset+'/data_1000_7.npz','./data/'+args.dataset+'/data_1000_8.npz','./data/'+args.dataset+'/data_1000_9.npz','./data/'+args.dataset+'/data_1000_10.npz','./data/'+args.dataset+'/data_1000_11.npz','./data/'+args.dataset+'/data_1000_12.npz','./data/'+args.dataset+'/data_1000_13.npz','./data/'+args.dataset+'/data_1000_14.npz','./data/'+args.dataset+'/data_1000_15.npz','./data/'+args.dataset+'/data_1000_16.npz','./data/'+args.dataset+'/data_1000_17.npz','./data/'+args.dataset+'/data_1000_18.npz','./data/'+args.dataset+'/data_1000_19.npz','./data/'+args.dataset+'/data_1000_20.npz','./data/'+args.dataset+'/data_1000_21.npz','./data/'+args.dataset+'/data_1000_22.npz','./data/'+args.dataset+'/data_1000_23.npz','./data/'+args.dataset+'/data_1000_24.npz','./data/'+args.dataset+'/data_1000_25.npz','./data/'+args.dataset+'/data_1000_26.npz']
+    elif args.dataset == 'colors':
+        language_model_data = ['./data/'+args.dataset+'/data_1000_0.npz','./data/'+args.dataset+'/data_1000_1.npz','./data/'+args.dataset+'/data_1000_2.npz','./data/'+args.dataset+'/data_1000_3.npz','./data/'+args.dataset+'/data_1000_4.npz','./data/'+args.dataset+'/data_1000_5.npz','./data/'+args.dataset+'/data_1000_6.npz','./data/'+args.dataset+'/data_1000_7.npz','./data/'+args.dataset+'/data_1000_8.npz','./data/'+args.dataset+'/data_1000_9.npz','./data/'+args.dataset+'/data_1000_10.npz','./data/'+args.dataset+'/data_1000_11.npz','./data/'+args.dataset+'/data_1000_12.npz','./data/'+args.dataset+'/data_1000_13.npz','./data/'+args.dataset+'/data_1000_14.npz']
+        
     # Vocab
-    speaker_embs = nn.Embedding(4+len(VOCAB), 50)
-    listener_embs = nn.Embedding(4+len(VOCAB), 50)
-    vocab = torch.load('vocab.pt')
+    vocab = torch.load('./models/'+str(args.dataset)+'/vocab.pt')
+
+    speaker_embs = nn.Embedding(len(vocab['w2i'].keys()), 50)
+    listener_embs = nn.Embedding(len(vocab['w2i'].keys()), 50)
 
     # Model
     language_model = models.LanguageModel(speaker_embs)
@@ -97,4 +104,4 @@ if __name__ == '__main__':
         
     # Save the best model
     language_model = best_language_model
-    torch.save(language_model, 'language-model.pt')
+    torch.save(language_model, './models/'+str(args.dataset)+'/language-model.pt')

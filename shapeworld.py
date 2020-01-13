@@ -594,7 +594,31 @@ def generate_single(mp_args):
                         shape_ = random_shape()
                         if shape_ != target_shape:
                             same_shape = False
-                            
+        else:
+            """
+            while (color_ == 'red' and shape_ == 'circle') or (color_ == 'blue' and shape_ == 'square') or (color_ == 'green' and shape_ == 'rectangle') or (color_ == 'yellow' and shape_ == 'ellipse') or (color_ == 'white' and shape_ == 'circle') or (color_ == 'gray' and shape_ == 'square'):
+                color_ = random_color()
+                shape_ = random_shape()
+            """
+            ###new_combo
+            if w_idx == 0:
+                while color_ != 'red':
+                    color_ = random_color()
+            else:
+                while color_ == 'red':
+                    color_= random_color()
+            ###new_color
+            """
+            while shape_ == 'square':
+                shape_ = random_shape()
+            """###new_shape
+            """
+            if w_idx == 0:
+                while (color_ == 'red' and shape_ == 'circle') or (color_ == 'blue' and shape_ == 'square') or (color_ == 'green' and shape_ == 'rectangle') or (color_ == 'yellow' and shape_ == 'ellipse') or (color_ == 'white' and shape_ == 'circle') or (color_ == 'gray' and shape_ == 'square'):
+                    color_ = random_color()
+                    shape_ = random_shape()
+             """###new_context
+                    
         shapes.append(shape_)
         colors.append(color_)
         shape = SHAPE_IMPLS[shape_](color=color_)
@@ -604,6 +628,8 @@ def generate_single(mp_args):
         img.draw_shapes([shape])
         imgs[w_idx] = img.array()
         labels[w_idx] = label
+    print(colors)
+    print(shapes)
     return imgs, labels, config, i
 
 
@@ -749,7 +775,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    files = ['./data/single/reference-1000-70.npz','./data/single/reference-1000-71.npz','./data/single/reference-1000-72.npz','./data/single/reference-1000-73.npz','./data/single/reference-1000-74.npz']
+    files = ['./data/single/generalization_new_color/test/reference-1000.npz']
     for file in files:
         data = generate(
             args.n_examples, args.n_images, args.correct, verbose=True,
