@@ -92,6 +92,8 @@ class Speaker(nn.Module):
             eos_prob = []
         if activation == 'multinomial':
             lang_prob = []
+        else:
+            lang_prob = None
         
         # And vector lengths
         lang_length = torch.ones(batch_size, dtype=torch.int64).to(feats.device)
@@ -185,18 +187,21 @@ class Speaker(nn.Module):
 
         # Cat language tensors
         lang_tensor = torch.cat(lang, 1)
-        lang_prob_tensor = torch.cat(lang_prob, 1)
         if length_penalty:
             # Q: why is this only done if length penalty active?
             for i in range(lang_tensor.shape[0]):
                 lang_tensor[i, lang_length[i]:] = 0
-        for i in range(lang_prob_tensor.shape[0]):
-            lang_prob_tensor[i, lang_length[i]:] = 0
 
         # Trim max length
         max_lang_len = lang_length.max()
         lang_tensor = lang_tensor[:, :max_lang_len, :]
-        lang_prob_tensor = lang_prob_tensor[:, :max_lang_len]
+
+        if activation == 'multinomial':
+            lang_prob_tensor = torch.cat(lang_prob, 1)
+            for i in range(lang_prob_tensor.shape[0]):
+                lang_prob_tensor[i, lang_length[i]:] = 0
+            lang_prob_tensor = lang_prob_tensor[:, :max_lang_len]
+            lang_prob = lang_prob_tensor.sum(1)
 
         if length_penalty:
             # eos prob -> eos loss
@@ -211,7 +216,6 @@ class Speaker(nn.Module):
         else:
             eos_loss = 0
         # Sum up log probabilities of samples
-        lang_prob = lang_prob_tensor.sum(1)
         return lang_tensor, lang_length, eos_loss, lang_prob
 
     def to_text(self, lang_onehot):
