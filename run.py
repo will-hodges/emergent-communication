@@ -335,9 +335,9 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, v
                     lang_lengths = lang_lengths.unsqueeze(0)
                 elif run_type == 'pretrained':
                     if penalty == 'probability' or penalty == None:
-                        lang, lang_length, eos_loss = speaker(img, y, activation = activation, tau = tau, length_penalty = False)
+                        lang, lang_length, eos_loss, lang_prob = speaker(img, y, activation = activation, tau = tau, length_penalty = False)
                     else:
-                        lang, lang_length, eos_loss = speaker(img, y, activation = activation, tau = tau, length_penalty = True)
+                        lang, lang_length, eos_loss, lang_prob = speaker(img, y, activation = activation, tau = tau, length_penalty = True)
                 elif run_type == 'oracle':
                     lang_length = length
                 else:
@@ -417,7 +417,10 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, v
                                 meters['loss'].update(this_loss, batch_size)
                                 meters['acc'].update(this_acc, batch_size)
                         else:
-                            if split == 'train' and run_type == 'pretrained' and activation != 'gumbel' and activation != None:
+                            if split == 'train' and run_type == 'pretrained' and activation == 'multinomial':
+                                # Reinforce
+                                lis_scores = listener(img, lang, lang_length, average=False)
+                            elif split == 'train' and run_type == 'pretrained' and activation != 'gumbel' and activation != None:
                                 lis_scores = listener(img, lang, lang_length, average=True)
                             else:
                                 lang_onehot = lang.argmax(2)
@@ -479,7 +482,22 @@ def run(epoch, data_file, split, run_type, speaker, listener, optimizer, loss, v
                                                 true_lang[B][L][0] = 1
                                     true_lis_scores = listener(img, true_lang, true_lang_length)
                                     """
-                                this_loss = loss(lis_scores,y.long())+eos_loss*float(lm_wt)
+                                if activation == 'multinomial':
+                                    # Compute policy loss
+                                    returns = (lis_scores.argmax(1) == y)
+                                    # No reward for saying nothing
+                                    not_zero = lang_length > 2
+                                    returns = (returns & not_zero).float()
+                                    # Slight negative reward for getting things wrong
+                                    # (TODO: tweak this)
+                                    returns = (1 * returns) + (-0.1 * (1 - returns))
+                                    # FIXME: Should we normalize in the binary case?
+
+                                    policy_loss = (-lang_prob * returns).sum()
+                                    this_loss = policy_loss
+                                else:
+                                    this_loss = loss(lis_scores,y.long())
+                                this_loss = this_loss + eos_loss * float(lm_wt)
                                 """
                                 print_it = True
                                 for param in speaker.parameters():

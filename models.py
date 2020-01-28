@@ -90,6 +90,8 @@ class Speaker(nn.Module):
         lang = []
         if length_penalty:
             eos_prob = []
+        if activation == 'multinomial':
+            lang_prob = []
         
         # And vector lengths
         lang_length = torch.ones(batch_size, dtype=torch.int64).to(feats.device)
@@ -126,8 +128,6 @@ class Speaker(nn.Module):
                 predicted = outputs.max(1)[1]
                 predicted = predicted.unsqueeze(1)
             else:
-                #  outputs = F.softmax(outputs, dim=1)
-                #  predicted = torch.multinomial(outputs, 1)
                 # TODO: Need to let language model accept one-hot vectors.
                 if activation=='gumbel'or activation==None:
                     predicted_onehot = F.gumbel_softmax(outputs, tau=tau, hard=True)
@@ -135,6 +135,15 @@ class Speaker(nn.Module):
                     predicted_onehot = F.softmax(outputs)
                 elif activation=='softmax_noise':
                     predicted_onehot = F.gumbel_softmax(outputs, tau=tau, hard=False)
+                elif activation == 'multinomial':
+                    # Normal non-differentiable sampling from the RNN, trained with REINFORCE
+                    idx_prob = F.log_softmax(outputs, dim=1)
+                    predicted = torch.multinomial(idx_prob.exp(), 1)
+                    predicted_onehot = to_onehot(predicted, n=self.vocab_size)
+                    predicted_logprob = torch.gather(idx_prob, 1, predicted)
+                    lang_prob.append(predicted_logprob)
+                else:
+                    raise NotImplementedError(activation)
 
                 # Add to lang
                 lang.append(predicted_onehot.unsqueeze(1))
@@ -145,14 +154,23 @@ class Speaker(nn.Module):
             predicted_npy = predicted_onehot.argmax(1).cpu().numpy()
             
             # Update language lengths
-            for i, pred in enumerate(predicted_npy):
-                if not done_sampling[i]:
-                    lang_length[i] += 1
-                if pred == data.EOS_IDX and activation == 'gumbel':
-                    done_sampling[i] = True
+            for j, pred in enumerate(predicted_npy):
+                if not done_sampling[j]:
+                    lang_length[j] += 1
+                if pred == data.EOS_IDX and activation in {'gumbel', 'multinomial'}:
+                    done_sampling[j] = True
 
             # (1, batch_size, n_vocab) X (n_vocab, h) -> (1, batch_size, h)
             inputs = (predicted_onehot.unsqueeze(0)) @ self.embedding.weight
+
+        # If multinomial, we need to run inputs once more to get the logprob of
+        # EOS (in case we've sampled that far)
+        if activation == 'multinomial':
+            outputs, states = self.gru(inputs, states)  # outputs: (L=1,B,H)
+            outputs = outputs.squeeze(0)                # outputs: (B,H)
+            outputs = self.outputs2vocab(outputs)       # outputs: (B,V)
+            idx_prob = F.log_softmax(outputs, dim=1)
+            lang_prob.append(idx_prob[:, data.EOS_IDX].unsqueeze(1))
 
         # Add EOS if we've never sampled it
         eos_onehot = torch.zeros(batch_size, 1, self.vocab_size).to(feats.device)
@@ -167,27 +185,34 @@ class Speaker(nn.Module):
 
         # Cat language tensors
         lang_tensor = torch.cat(lang, 1)
+        lang_prob_tensor = torch.cat(lang_prob, 1)
         if length_penalty:
+            # Q: why is this only done if length penalty active?
             for i in range(lang_tensor.shape[0]):
-                lang_tensor[i,lang_length[i]:] = 0
+                lang_tensor[i, lang_length[i]:] = 0
+        for i in range(lang_prob_tensor.shape[0]):
+            lang_prob_tensor[i, lang_length[i]:] = 0
 
         # Trim max length
         max_lang_len = lang_length.max()
         lang_tensor = lang_tensor[:, :max_lang_len, :]
-        
+        lang_prob_tensor = lang_prob_tensor[:, :max_lang_len]
+
         if length_penalty:
             # eos prob -> eos loss
             eos_prob = torch.stack(eos_prob, dim = 1)
             for i in range(eos_prob.shape[0]):
                 r_len = torch.arange(1,eos_prob.shape[1]+1,dtype=torch.float32)
                 eos_prob[i] = eos_prob[i]*r_len.to(eos_prob.device)
-                eos_prob[i,lang_length[i]:] = 0
+                eos_prob[i, lang_length[i]:] = 0
             eos_loss = -eos_prob
             eos_loss = eos_loss.sum(1)/lang_length.float()
             eos_loss = eos_loss.mean()
         else:
             eos_loss = 0
-        return lang_tensor, lang_length, eos_loss
+        # Sum up log probabilities of samples
+        lang_prob = lang_prob_tensor.sum(1)
+        return lang_tensor, lang_length, eos_loss, lang_prob
 
     def to_text(self, lang_onehot):
         texts = []
