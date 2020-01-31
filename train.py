@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
+import pandas as pd
 
 import vision
 import util
@@ -59,6 +60,7 @@ if __name__ == '__main__':
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--new_vocab', action='store_true')
     parser.add_argument('--lm_wt', default=0.1)
+    parser.add_argument('--metrics_file', default='metrics.csv', help='Where to save metrics')
     parser.add_argument('--generalization', default=None)
     parser.add_argument('--activation', default=None)
     parser.add_argument('--penalty', default=None)
@@ -148,6 +150,7 @@ if __name__ == '__main__':
 
     # Metrics
     metrics = init_metrics()
+    all_metrics = []
 
     # Pretrain
     if args.pretrain or args.srr:
@@ -182,7 +185,7 @@ if __name__ == '__main__':
         else:
             listener = torch.load('./models/'+str(args.dataset)+'/pretrained-listener-0.pt')
             listener_val = torch.load('./models/'+str(args.dataset)+'/pretrained-listener-1.pt')
-            #speaker = torch.load('./models/'+args.dataset+'/pretrained_len_0001_speaker.pt')
+            #speaker = torch.load('./models/'+args.dataset+'/pretrained_len_001_speaker.pt')
             
     # Train
     if args.srr:
@@ -206,6 +209,10 @@ if __name__ == '__main__':
                 best_speaker = copy.deepcopy(speaker)
             print(epoch)
             print(metrics)
+            metrics_last = {k: v[-1] if isinstance(v, list) else v
+                            for k, v in metrics.items()}
+            all_metrics.append(metrics_last)
+            pd.DataFrame(all_metrics).to_csv(args.metrics_file, index=False)
         # Save the best model
         speaker = best_speaker
         if args.generalization != None:
@@ -236,16 +243,20 @@ if __name__ == '__main__':
                 best_listener = copy.deepcopy(listener)
             print(epoch)
             print(metrics)
+            metrics_last = {k: v[-1] if isinstance(v, list) else v
+                            for k, v in metrics.items()}
+            all_metrics.append(metrics_last)
+            pd.DataFrame(all_metrics).to_csv(args.metrics_file, index=False)
         # Save the best model
         if args.pretrain:
             if args.generalization != None:
                 torch.save(speaker, './models/'+args.dataset+'/'+args.generalization+'_pretrained_speaker.pt')
             elif args.activation != None:
                 torch.save(best_speaker, './models/'+args.dataset+'/pretrained_speaker_'+args.activation+'.pt')
-            elif args.tau != None:
-                torch.save(best_speaker, './models/'+args.dataset+'/pretrained_speaker_'+str(int(args.tau*100))+'.pt')
+            #elif args.tau != 1:
+            #    torch.save(best_speaker, './models/'+args.dataset+'/pretrained_speaker_'+str(int(args.tau*100))+'.pt')
             else:
-                torch.save(best_speaker, './models/'+args.dataset+'/pretrained_speaker.pt')
+                torch.save(best_speaker, './models/'+args.dataset+'/pretrained_len_01_speaker.pt')
         else:
             torch.save(best_speaker, './models/single/speaker.pt')
             torch.save(best_listener, './models/single/listener.pt')

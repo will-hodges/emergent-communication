@@ -73,7 +73,7 @@ class Speaker(nn.Module):
         feats_and_targets = torch.cat((feats_emb, targets_onehot.unsqueeze(2)), 2)
 
         ft_concat = feats_and_targets.view(batch_size, -1)
-
+        
         return ft_concat
 
     def forward(self, feats, targets, greedy=False, activation='gumbel', tau = 1, length_penalty=False, max_len=40):
@@ -90,6 +90,11 @@ class Speaker(nn.Module):
         lang = []
         if length_penalty:
             eos_prob = []
+            
+        if activation == 'multinomial':
+            lang_prob = []
+        else:
+            lang_prob = None
         
         # And vector lengths
         lang_length = torch.ones(batch_size, dtype=torch.int64).to(feats.device)
@@ -132,10 +137,19 @@ class Speaker(nn.Module):
                 if activation=='gumbel'or activation==None:
                     predicted_onehot = F.gumbel_softmax(outputs, tau=tau, hard=True)
                 elif activation=='softmax':
-                    predicted_onehot = F.softmax(outputs)
+                    predicted_onehot = F.softmax(outputs/tau)
                 elif activation=='softmax_noise':
                     predicted_onehot = F.gumbel_softmax(outputs, tau=tau, hard=False)
-
+                elif activation == 'multinomial':
+                    # Normal non-differentiable sampling from the RNN, trained with REINFORCE
+                    idx_prob = F.log_softmax(outputs, dim=1)
+                    predicted = torch.multinomial(idx_prob.exp(), 1)
+                    predicted_onehot = to_onehot(predicted, n=self.vocab_size)
+                    predicted_logprob = torch.gather(idx_prob, 1, predicted)
+                    lang_prob.append(predicted_logprob)
+                else:
+                    raise NotImplementedError(activation)
+                    
                 # Add to lang
                 lang.append(predicted_onehot.unsqueeze(1))
                 if length_penalty:
@@ -145,15 +159,24 @@ class Speaker(nn.Module):
             predicted_npy = predicted_onehot.argmax(1).cpu().numpy()
             
             # Update language lengths
-            for i, pred in enumerate(predicted_npy):
-                if not done_sampling[i]:
-                    lang_length[i] += 1
-                if pred == data.EOS_IDX and activation == 'gumbel':
-                    done_sampling[i] = True
+            for j, pred in enumerate(predicted_npy):
+                if not done_sampling[j]:
+                    lang_length[j] += 1
+                if pred == data.EOS_IDX and activation in {'gumbel', 'multinomial'}:
+                    done_sampling[j] = True
 
             # (1, batch_size, n_vocab) X (n_vocab, h) -> (1, batch_size, h)
             inputs = (predicted_onehot.unsqueeze(0)) @ self.embedding.weight
 
+        # If multinomial, we need to run inputs once more to get the logprob of
+        # EOS (in case we've sampled that far)
+        if activation == 'multinomial':
+            outputs, states = self.gru(inputs, states)  # outputs: (L=1,B,H)
+            outputs = outputs.squeeze(0)                # outputs: (B,H)
+            outputs = self.outputs2vocab(outputs)       # outputs: (B,V)
+            idx_prob = F.log_softmax(outputs, dim=1)
+            lang_prob.append(idx_prob[:, data.EOS_IDX].unsqueeze(1))
+            
         # Add EOS if we've never sampled it
         eos_onehot = torch.zeros(batch_size, 1, self.vocab_size).to(feats.device)
         eos_onehot[:, 0, data.EOS_IDX] = 1.0
@@ -167,13 +190,20 @@ class Speaker(nn.Module):
 
         # Cat language tensors
         lang_tensor = torch.cat(lang, 1)
-        if length_penalty:
-            for i in range(lang_tensor.shape[0]):
-                lang_tensor[i,lang_length[i]:] = 0
+        
+        for i in range(lang_tensor.shape[0]):
+            lang_tensor[i, lang_length[i]:] = 0
 
         # Trim max length
         max_lang_len = lang_length.max()
         lang_tensor = lang_tensor[:, :max_lang_len, :]
+        
+        if activation == 'multinomial':
+            lang_prob_tensor = torch.cat(lang_prob, 1)
+            for i in range(lang_prob_tensor.shape[0]):
+                lang_prob_tensor[i, lang_length[i]:] = 0
+            lang_prob_tensor = lang_prob_tensor[:, :max_lang_len]
+            lang_prob = lang_prob_tensor.sum(1)
         
         if length_penalty:
             # eos prob -> eos loss
@@ -181,13 +211,15 @@ class Speaker(nn.Module):
             for i in range(eos_prob.shape[0]):
                 r_len = torch.arange(1,eos_prob.shape[1]+1,dtype=torch.float32)
                 eos_prob[i] = eos_prob[i]*r_len.to(eos_prob.device)
-                eos_prob[i,lang_length[i]:] = 0
+                eos_prob[i, lang_length[i]:] = 0
             eos_loss = -eos_prob
             eos_loss = eos_loss.sum(1)/lang_length.float()
             eos_loss = eos_loss.mean()
         else:
             eos_loss = 0
-        return lang_tensor, lang_length, eos_loss
+            
+        # Sum up log probabilities of samples
+        return lang_tensor, lang_length, eos_loss, lang_prob
 
     def to_text(self, lang_onehot):
         texts = []
@@ -205,6 +237,9 @@ class Speaker(nn.Module):
 class LiteralSpeaker(nn.Module):
     def __init__(self, feat_model, embedding_module, hidden_size=100):
         super(LiteralSpeaker, self).__init__()
+        self.game = 'reference'
+        self.contextual = False
+        
         self.embedding = embedding_module
         self.embedding_dim = embedding_module.embedding_dim
         self.vocab_size = embedding_module.num_embeddings
@@ -213,29 +248,41 @@ class LiteralSpeaker(nn.Module):
         self.feat_size = feat_model.final_feat_dim
         self.gru = nn.GRU(self.embedding_dim, self.hidden_size)
         self.outputs2vocab = nn.Linear(self.hidden_size, self.vocab_size)
-        self.init_h = nn.Linear(self.feat_size, self.hidden_size)
-
-    def forward(self, feats, seq, length, y):
-            
-        feats = torch.from_numpy(np.array([np.array(feat[y[idx],:,:,:].cpu()) for idx, feat in enumerate(feats)])).cuda()
-            
-        # feats is from example images
-        batch_size = seq.shape[0]
+        if self.contextual and self.game == 'reference':
+            self.init_h = nn.Linear(3 * (self.feat_size + 1), self.hidden_size)
+        else:
+            self.init_h = nn.Linear(self.feat_size, self.hidden_size)
         
-        if batch_size > 1:
-            sorted_lengths, sorted_idx = torch.sort(length, descending=True)
-            seq = seq[sorted_idx]
-            feats = feats[sorted_idx]
-
-        feats = feats.unsqueeze(0)
+    def forward(self, feats, seq, length, y):
+        try: self.contextual
+        except:
+            self.game = 'reference'
+            self.contextual = False
+        batch_size = seq.shape[0]
+        if self.contextual:
+            n_obj = feats.shape[1]
+            rest = feats.shape[2:]
+            feats = feats.view(batch_size * n_obj, *rest)
+            feats_emb_flat = self.feat_model(feats)
+            feats_emb = feats_emb_flat.unsqueeze(1).view(batch_size, n_obj, -1)
+            # Add targets
+            if self.game == 'reference':
+                targets_onehot = to_onehot(y)
+            if self.game == 'concept':
+                targets_onehot = y.float()
+            feats_and_targets = torch.cat((feats_emb, targets_onehot.unsqueeze(2)), 2)
+            feats_emb = feats_and_targets.view(batch_size, -1)
+        else:
+            feats = torch.from_numpy(np.array([np.array(feat[y[idx],:,:,:].cpu()) for idx, feat in enumerate(feats)])).cuda()
+            feats_emb = self.feat_model(feats.cuda())
+            
         # reorder from (B,L,D) to (L,B,D)
         seq = seq.transpose(0, 1).to(feats.device)
 
         # embed your sequences
         embed_seq = seq @ self.embedding.weight
-        
-        # embed features
-        feats_emb = self.feat_model(feats.squeeze().to(feats.device))
+            
+        #feats_emb = self.feat_model(feats.squeeze().to(feats.device))
         feats_emb = self.init_h(feats_emb)
         feats_emb = feats_emb.unsqueeze(0)
         
@@ -245,27 +292,38 @@ class LiteralSpeaker(nn.Module):
         # reorder from (L,B,D) to (B,L,D)
         output = output.transpose(0, 1)
 
-        if batch_size > 1:
-            _, reversed_idx = torch.sort(sorted_idx)
-            output = output[reversed_idx]
-
         max_length = output.size(1)
-        output_2d = output.view(batch_size * max_length, -1)
+        output_2d = output.reshape(batch_size * max_length, -1)
         outputs_2d = self.outputs2vocab(output_2d)
-        lang_tensor = outputs_2d.view(batch_size, max_length, self.vocab_size)
-        
+        lang_tensor = outputs_2d.reshape(batch_size, max_length, self.vocab_size)
         return lang_tensor
     
     def sample(self, feats, y, greedy=False):
         """Generate from image features using greedy search."""
+        try: self.contextual
+        except:
+            self.game = 'reference'
+            self.contextual = False
         with torch.no_grad():
-            batch_size = feats.size(0)
+            batch_size = feats.shape[0]
+            if self.contextual:
+                n_obj = feats.shape[1]
+                rest = feats.shape[2:]
+                feats = feats.view(batch_size * n_obj, *rest)
+                feats_emb_flat = self.feat_model(feats)
+                feats_emb = feats_emb_flat.unsqueeze(1).view(batch_size, n_obj, -1)
+                # Add targets
+                if self.game == 'reference':
+                    targets_onehot = to_onehot(y)
+                if self.game == 'concept':
+                    targets_onehot = y.float()
+                feats_and_targets = torch.cat((feats_emb, targets_onehot.unsqueeze(2)), 2)
+                feats_emb = feats_and_targets.view(batch_size, -1)
+            else:
+                feats = torch.from_numpy(np.array([np.array(feat[y[idx],:,:,:].cpu()) for idx, feat in enumerate(feats)])).cuda()
+                feats_emb = self.feat_model(feats)
 
             # initialize hidden states using image features
-            #states = feats.unsqueeze(0)
-            feats = torch.from_numpy(np.array([np.array(feat[y[idx],:,:,:].cpu()) for idx, feat in enumerate(feats)]))
-            feats = feats.unsqueeze(0).to(y.device)
-            feats_emb = self.feat_model(feats.squeeze())
             feats_emb = self.init_h(feats_emb)
             states = feats_emb.unsqueeze(0)
 
@@ -355,11 +413,9 @@ class LanguageModel(nn.Module):
         with torch.no_grad():
             max_len = 40
             batch_size = seq.shape[0]
-            seq = F.pad(seq,(0,0,max_len-seq.shape[1],0)).float()
-            
+            seq = F.pad(seq,(0,0,0,(max_len-seq.shape[1]))).float()
             # reorder from (B,L,D) to (L,B,D)
             seq = seq.transpose(0, 1)
-
             # embed your sequences
             embed_seq = seq.cuda() @ self.embedding.weight
 
@@ -368,16 +424,17 @@ class LanguageModel(nn.Module):
             
             inputs = embed_seq
             states = feats_emb
-            prob = torch.ones(batch_size)
+            prob = torch.zeros(batch_size)
             for i in range(max_len):
                 outputs, states = self.gru(inputs[i,:,:].unsqueeze(0), states)  # outputs: (L=1,B,H)
                 outputs = outputs.squeeze(0)                # outputs: (B,H)
                 outputs = self.outputs2vocab(outputs)       # outputs: (B,V)
-
+                
                 idx_prob = F.log_softmax(outputs,dim=1).cpu().numpy()
                 for j,k in enumerate(seq[i].argmax(1)):
-                    if k != 0:
+                    if i < length[j]:
                         prob[j] = prob[j]+idx_prob[j,k]
+            
         return prob
     
 class RNNEncoder(nn.Module):
@@ -470,7 +527,7 @@ class Listener(nn.Module):
             lang_bilinear = self.bilinear(lang_emb)
 
             # Compute dot products
-            scores = torch.einsum('ijh,ih->ij', (feats_emb, lang_bilinear))
+            scores = F.softmax(torch.einsum('ijh,ih->ij', (feats_emb, lang_bilinear)))
             #print(scores)
             #print(scores.argmax(1))
                 

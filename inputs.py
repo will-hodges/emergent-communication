@@ -2,6 +2,7 @@ import contextlib
 import random
 from collections import defaultdict
 import copy
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,3 +35,21 @@ for directory in directories:
             plt.imsave('./output/single/'+str(directory)+'/game-'+str(game-990)+'-img-3.png', img[0][2].permute(1,2,0).cpu().numpy())
             np.savetxt('./output/single/'+str(directory)+'/game-'+str(game-990)+'-y.txt', y)
             np.savetxt('./output/single/'+str(directory)+'/game-'+str(game-990)+'-lang.txt', lang)
+"""
+            
+vocab = torch.load('./models/colors/vocab.pt')
+print(vocab)
+
+directories = ['all','close','far']
+for directory in directories:
+    d = data.load_raw_data('./data/colors/data_'+str(directory)+'.npz')
+    dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=1, shuffle=False)
+    samples = len(dataloader)
+    
+    for game, (img, y, lang) in enumerate(dataloader):
+        if game > (samples-11):
+            plt.imsave('./output/colors/'+str(directory)+'/game-'+str(game-(samples-10))+'-img-1.png', img[0][0].permute(1,2,0).cpu().numpy())
+            plt.imsave('./output/colors/'+str(directory)+'/game-'+str(game-(samples-10))+'-img-2.png', img[0][1].permute(1,2,0).cpu().numpy())
+            plt.imsave('./output/colors/'+str(directory)+'/game-'+str(game-(samples-10))+'-img-3.png', img[0][2].permute(1,2,0).cpu().numpy())
+            np.savetxt('./output/colors/'+str(directory)+'/game-'+str(game-(samples-10))+'-y.txt', y)
+            np.savetxt('./output/colors/'+str(directory)+'/game-'+str(game-(samples-10))+'-lang.txt', lang)"""

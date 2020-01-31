@@ -34,8 +34,8 @@ loss = nn.CrossEntropyLoss()
 metrics = init_metrics()
    
 batch_size = 100
-files = ['./data/single/random/reference-1000.npz','./data/single/both-needed/reference-1000.npz','./data/single/shape-needed/reference-1000.npz','./data/single/color-needed/reference-1000.npz', './data/single/either-ok/reference-1000.npz']
-output_files = ['./output/single/random/','./output/single/both-needed/','./output/single/shape-needed/','./output/single/color-needed/','./output/single/either-ok/']
+files = ['./data/single/random/reference-1000.npz','./data/single/both-needed/reference-1000.npz', './data/single/either-ok/reference-1000.npz','./data/single/shape-needed/reference-1000.npz','./data/single/color-needed/reference-1000.npz']
+output_files = ['./output/single/random/','./output/single/both-needed/','./output/single/either-ok/','./output/single/shape-needed/','./output/single/color-needed/']
 epoch = 0
 """
 print('oracle')
@@ -55,44 +55,32 @@ for (file, output_file) in zip(files,output_files):
 """
 listener_names = ['train','val','test']
 listeners = ['./models/single/pretrained-listener-0.pt','./models/single/pretrained-listener-1.pt','./models/single/pretrained-listener-2.pt'] # or 2, 1
-models = ['s','srr5','srr10','srr20','rsa','pretrained','pretrained_len','softmax','softmax_noise']
+models = ['s','rsa','srr5','s','s_context','pretrained_len']
 speakers = ['./models/single/literal-speaker.pt','./models/single/literal-speaker.pt',
             './models/single/literal-speaker.pt','./models/single/literal-speaker.pt',
-            './models/single/literal-speaker.pt','./models/single/pretrained_speaker.pt',
-            './models/single/pretrained_speaker_len01.pt',
-            './models/single/pretrained_speaker_softmax.pt',
-            './models/single/pretrained_speaker_softmax_noise.pt']
-run_types = ['sample','sample','sample','sample','rsa','pragmatic','pragmatic','pragmatic','pragmatic']
-activations = ['gumbel','gumbel','gumbel','gumbel','gumbel','gumbel','gumbel','softmax','softmax_noise']
-num_samples = [1,5,10,20]
-indices = [0,1,2,3,4,5,6,7,8]
-n = 1
-times = [0,0,0,0,0,0,0,0,0]
-for j in range(0):
-    for listener, listener_name in zip(listeners[2:], listener_names[2:]):
-        count = 0
-        listener = torch.load(listener)
-        for model, speaker, run_type, activation, i in zip(models,speakers,run_types,activations,indices):
-            print(listener_name+' '+model)
-            if run_type == 'sample':
-                n = num_samples[count]
-                count += 1
-            speaker = torch.load(speaker)
-            for (file, output_file) in zip(files[0:1],output_files[0:1]):
-                start = time.time()
-                metrics, outputs = run(epoch, [file], 'val', run_type, speaker, listener, optimizer, loss, vocab, batch_size, True, num_samples = n, get_outputs = True, activation = activation)
-                end = time.time()
-                times[i] += end - start
-                print(times)
-                preds = outputs['pred'][-1].cpu().numpy()
-                scores = outputs['score'][-1].cpu().numpy()
-                langs = outputs['lang'][-1].cpu().numpy()
-                for game in range(90,langs.shape[0]):
-                    np.savetxt(output_file+'game_'+str(game)+'_'+str(model)+'_'+str(listener_name)+'_lang.txt', langs[game])
-                np.savetxt(output_file+str(model)+'_'+str(listener_name)+'_pred.txt', preds[90:])
-                print(output_file+str(model)+'_'+str(listener_name)+'_pred.txt', preds[90:])
-                np.savetxt(output_file+str(model)+'_'+str(listener_name)+'_score.txt', scores[90:])
-                print(metrics)
-                np.save(output_file+str(model)+'_'+str(listener_name)+'_metrics.npy', metrics) 
-
-print(times)
+            './models/single/literal-speaker-contextual.pt','./models/single/pretrained_speaker_len01.pt']
+run_types = ['sample','rsa','sample','sample','sample','pragmatic']
+activations = ['gumbel','gumbel','gumbel','gumbel','gumbel','gumbel']
+num_samples = [1,1,5,1,1,1]
+for listener, listener_name in zip(listeners[2:], listener_names[2:]):
+    listener = torch.load(listener)
+    for i, model, speaker, run_type, activation, n in zip(list(range(6)),models,speakers,run_types,activations,num_samples):
+        print(listener_name+' '+model)
+        speaker = torch.load(speaker)
+        for (file, output_file) in zip(files,output_files):
+            print(model, run_type, activation, n)
+            metrics, outputs = run(epoch, [file], 'val', run_type, speaker, listener, optimizer, loss, vocab, batch_size, True, num_samples = n, get_outputs = True, activation = activation)
+            preds = outputs['pred'][-1].cpu().numpy()
+            scores = outputs['score'][-1].cpu().numpy()
+            langs = outputs['lang'][-1].cpu().numpy()
+            for game in range(langs.shape[0]-10,langs.shape[0]):
+                seq = []
+                for word_index in langs[game]:
+                    seq.append(vocab['i2w'][word_index])
+            for game in range(90,langs.shape[0]):
+                np.savetxt(output_file+'game_'+str(game)+'_'+str(model)+'_'+str(listener_name)+'_lang.txt', seq, delimiter=" ", fmt="%s")
+            np.savetxt(output_file+str(model)+'_'+str(listener_name)+'_pred.txt', preds[90:])
+            print(output_file+str(model)+'_'+str(listener_name)+'_pred.txt', preds[90:])
+            np.savetxt(output_file+str(model)+'_'+str(listener_name)+'_score.txt', scores[90:])
+            print(metrics)
+            np.save(output_file+str(model)+'_'+str(listener_name)+'_metrics.npy', metrics) 

@@ -35,17 +35,17 @@ output_files = ['./output/single/','./output/chairs/','./output/colors/']
 directories = ['single','chairs','colors']
 listener_names = ['train','val','test']
 listeners = ['pretrained-listener-0.pt','pretrained-listener-1.pt','pretrained-listener-2.pt']
-models = ['s','srr5','srr10','srr20','pretrained','pretrained_len']
+models = ['s','srr5','srr10','srr20','human','direct']
 speakers = ['literal-speaker.pt','literal-speaker.pt',
             'literal-speaker.pt','literal-speaker.pt','reg','len']
 run_types = ['sample','sample','sample','sample','pragmatic','pragmatic']
 num_samples = [1,5,10,20,1,1]
-for (file, output_file, directory) in zip(files[1:],output_files[1:],directories[1:]):
+for (file, output_file, directory) in zip(files[2:],output_files[2:],directories[2:]):
     vocab = torch.load('./models/'+directory+'/vocab.pt')
     for listener, listener_name in zip(listeners, listener_names):
         count = 0
         listener = torch.load('./models/'+directory+'/'+listener)
-        for model, speaker, run_type, n in zip(models[4:],speakers[4:],run_types[4:],num_samples[4:]):
+        for model, speaker, run_type, n in zip(models,speakers,run_types,num_samples):
             if speaker == 'reg':
                 if directory == 'chairs':
                     speaker = 'pretrained_speaker_softmax.pt'
@@ -55,7 +55,7 @@ for (file, output_file, directory) in zip(files[1:],output_files[1:],directories
                 if directory == 'chairs':
                     speaker = 'pretrained_speaker_len_001_softmax.pt'
                 if directory == 'colors':
-                    speaker = 'pretrained_speaker_length_01_softmax.pt'
+                    speaker = 'pretrained_speaker_softmax.pt'
             print(listener_name+' '+model+' '+directory)
             speaker = torch.load('./models/'+directory+'/'+speaker)
             metrics, outputs = run(0, [file], 'val', run_type, speaker, listener, optimizer, loss, vocab, batch_size, True, num_samples = n, get_outputs = True, activation = 'gumbel', ci = False, dataset = directory)
