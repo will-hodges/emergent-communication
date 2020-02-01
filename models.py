@@ -425,15 +425,15 @@ class LanguageModel(nn.Module):
             inputs = embed_seq
             states = feats_emb
             prob = torch.zeros(batch_size)
-            for i in range(max_len):
-                outputs, states = self.gru(inputs[i,:,:].unsqueeze(0), states)  # outputs: (L=1,B,H)
-                outputs = outputs.squeeze(0)                # outputs: (B,H)
-                outputs = self.outputs2vocab(outputs)       # outputs: (B,V)
-                
-                idx_prob = F.log_softmax(outputs,dim=1).cpu().numpy()
-                for j,k in enumerate(seq[i].argmax(1)):
-                    if i < length[j]:
-                        prob[j] = prob[j]+idx_prob[j,k]
+            
+            outputs, _ = self.gru(inputs, states)
+            outputs = outputs.squeeze(0)
+            outputs = self.outputs2vocab(outputs)
+            idx_prob = F.log_softmax(outputs,dim=1).cpu().numpy()
+            for word_idx in range(seq.shape[0]):
+                for utterance_idx, word in enumerate(seq[word_idx].argmax(1)):
+                    if word_idx < length[utterance_idx]:
+                        prob[utterance_idx] = prob[utterance_idx] + idx_prob[word_idx,utterance_idx,word]
             
         return prob
     
