@@ -1,0 +1,4 @@
+actual_literal_speaker = s0
+literal_speaker = s'0 (contextual speaker)
+pretrained_speaker = amortized speaker
+pretrained_listener = l0

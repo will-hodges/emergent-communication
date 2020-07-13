@@ -1,0 +1,5 @@
+data
+output
+shapeglot/images/*
+shapeglot/vgg_fc7_pt.pkl
+images/*
