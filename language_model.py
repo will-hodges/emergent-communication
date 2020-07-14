@@ -50,6 +50,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default=1e-3, type=int)
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--dataset', default='single')
+    parser.add_argument('--debug', action='store_true')
     parser.add_argument('--embed_size', default=50, type=int, help='Size of embedding layers')
     args = parser.parse_args()
     
@@ -85,10 +86,10 @@ if __name__ == '__main__':
     for epoch in range(args.epochs):
         # Train
         data_file = language_model_data[0:len(language_model_data)-1]
-        train_metrics, _ = run(data_file, 'train', 'language_model', language_model, listener, optimizer, loss, vocab, args.batch_size, args.cuda)
+        train_metrics, _ = run(data_file, 'train', 'language_model', language_model, listener, optimizer, loss, vocab, args.batch_size, args.cuda, debug=args.debug)
         # Validation
         data_file = [language_model_data[-1]]
-        val_metrics, _ = run(data_file, 'val', 'language_model', language_model, listener, optimizer, loss, vocab, args.batch_size, args.cuda)
+        val_metrics, _ = run(data_file, 'val', 'language_model', language_model, listener, optimizer, loss, vocab, args.batch_size, args.cuda, debug=args.debug)
         # Update metrics, prepending the split name
         for metric, value in train_metrics.items():
             metrics['train_{}'.format(metric)].append(value)

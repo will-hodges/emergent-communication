@@ -42,9 +42,12 @@ def evaluate(l0, data_file, vocab, batch_size, cuda, historical_acc):
             # Give language to listener and get prediction
             lis_scores = l0(img, lang, length)
             lis_pred = F.softmax(lis_scores).argmax(1)
+            print(f"lis_pred: {lis_pred}")
+            print(f"y: {y}")
             
             correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
             acc = correct.count(True) / len(correct)
+            print(acc)
             historical_acc.append(acc)
         return historical_acc
     

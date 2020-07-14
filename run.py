@@ -152,7 +152,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
         language_model.eval()
         if model_type != 'l0' and model_type != 'oracle' and model_type != 'test':
             speaker.eval()
-        if model_type != 's0' and model_type != 'sl0' and model_type != 'langauge_model':
+        if model_type != 's0' and model_type != 'sl0' and model_type != 'language_model':
             listener.eval()
         context = torch.no_grad()  # Do not evaluate gradients for efficiency
 
@@ -169,7 +169,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
             ci_listeners = None
             meters = {'loss':[], 'acc':[], 'prob':[], 'length':[], 'colors':[], 'shapes':[], 'time':[]}
     else:
-        if model_type == 's0' or model_type == 'langauge_model' or model_type == 'l0' or model_type == 'sl0':
+        if model_type == 's0' or model_type == 'language_model' or model_type == 'l0' or model_type == 'sl0':
             measures = ['loss', 'acc']
         else:
             measures = ['loss', 'lm loss', 'acc', 'length']
@@ -207,7 +207,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                 gt_lang = lang
                 if split == 'test':
                     outputs['gt_lang'].append(gt_lang)
-                if model_type == 's0' or model_type == 'sl0' or model_type == 'l0' or model_type == 'langauge_model' or model_type == 'oracle':
+                if model_type == 's0' or model_type == 'sl0' or model_type == 'l0' or model_type == 'language_model' or model_type == 'oracle':
                     max_len = 40
                     length = torch.tensor([np.count_nonzero(t) for t in lang.cpu()], dtype=np.int)
                     lang[lang>=len(vocab['w2i'].keys())] = 3
@@ -222,7 +222,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     img = img.cuda()
                     y = y.cuda()
                     lang = lang.cuda()
-                    if model_type == 's0' or model_type == 'sl0' or model_type == 'l0' or model_type == 'langauge_model':
+                    if model_type == 's0' or model_type == 'sl0' or model_type == 'l0' or model_type == 'language_model':
                         length = length.cuda()
 
                 # Refresh the optimizer
@@ -242,7 +242,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                             text = text + "\n Target: 0, Guess: "
                 elif model_type == 's0' or model_type == 'sl0':
                     lang_out = speaker(img, lang, length, y)
-                elif model_type == 'langauge_model':
+                elif model_type == 'language_model':
                     lang_out = speaker(lang, length)
                 elif model_type == 'sample':
                     if num_samples == 1:
@@ -329,7 +329,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                        
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
-                elif model_type == 's0' or model_type == 'sl0' or model_type == 'langauge_model':
+                elif model_type == 's0' or model_type == 'sl0' or model_type == 'language_model':
                     lang_out = lang_out[:, :-1].contiguous()
                     lang = lang[:, 1:].contiguous()
                     lang_out = lang_out.view(batch_size*lang_out.size(1), len(vocab['w2i'].keys()))
