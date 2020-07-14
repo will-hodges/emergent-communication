@@ -92,17 +92,3 @@ if __name__ == '__main__':
         
     print(statistics.mean(historical_acc))
     
-    sns.set_palette(sns.color_palette())
-    sns.set_style({'font.family':'serif', 'font.serif':'Arial'})
-    sns.set_style('whitegrid', {'legend.frameon':True})
-    sns.set(style='whitegrid', font_scale=2.5)
-    plt.figure(figsize=[14,7])
-    plt.xticks(rotation=60)
-    plt.xlabel('xlabel',visible=False)
-    sns.barplot(x="model", y="ci_acc", data=historical_acc, color=palette[0])
-    plt.ylabel("accuracy",weight='bold')
-    plt.ylim([0,1])
-    plt.title('Chairs',weight='bold')
-    plt.savefig('images/chairs.png')
-    plt.show()
-    
