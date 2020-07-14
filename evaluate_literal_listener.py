@@ -5,13 +5,13 @@ import torch.nn.functional as F
 import data
 from data import ShapeWorld
 import statistics
+import seaborn as sns
+import matplotlib.pyplot as plt
 
-def evaluate(sl0, l0, data_file, vocab, batch_size, cuda):
+def evaluate(l0, data_file, vocab, batch_size, cuda, historical_acc):
     context = torch.no_grad()
     d = data.load_raw_data(data_file)
     dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
-    
-    historical_acc = []
     
     with context:
         for batch_i, (img, y, lang) in enumerate(dataloader):
@@ -38,25 +38,20 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda):
                 length = length.cuda()
 
 
-            # Get speaker language
-            lang_out = sl0(img, lang, length, y)
-            pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
             
             # Give language to listener and get prediction
-            lis_scores = l0(img, lang_out, length)
+            lis_scores = l0(img, lang, length)
             lis_pred = F.softmax(lis_scores).argmax(1)
             
             correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
             acc = correct.count(True) / len(correct)
             historical_acc.append(acc)
-            print("L0 accuracy receiving text from SL0, batch %s: %s" % (batch_i, acc))
-        print("L0 mean accuracy receiving text from SL0: %s" % statistics.mean(historical_acc))
+        return historical_acc
     
 if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
     
     parser = ArgumentParser(description='Evaluate a literal speaker', formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--sl0', default='testing_models/actual_literal_speaker.pt', help='path to literal speaker')
     parser.add_argument('--l0', default='testing_models/pretrained_listener_0.pt', help='path to literal listener')
     parser.add_argument('--dataset', default='chairs', help='chairs, colors, shapeglot, or shapeworld')
     parser.add_argument('--cuda', action='store_true', help='run with cuda')
@@ -64,7 +59,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # Convert paths to models
-    sl0 = torch.load(args.sl0)
     l0 = torch.load(args.l0)
     
     # Load data to test on
@@ -80,16 +74,35 @@ if __name__ == '__main__':
         raise Exception('Dataset ' + args.dataset + ' is not defined.')
         
     # Load .npz files and the vocab
-    data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
+    if args.dataset != 'shapeglot':
+        data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
+    else:
+        data_files = [data_dir + str(e) + '.npz' for e in range(3,7)]
     vocab = torch.load('./models/' + args.dataset + '/vocab.pt')
 
     
     if args.cuda:
-        sl0.cuda()
         l0.cuda()
-    sl0.eval()
     l0.eval()
     
+    historical_acc = []
+    
     for file in data_files:
-        evaluate(sl0, l0, file, vocab, args.batch_size, args.cuda)
+        historical_acc.extend(evaluate(l0, file, vocab, args.batch_size, args.cuda, historical_acc))
+        
+    print(statistics.mean(historical_acc))
+    
+    sns.set_palette(sns.color_palette())
+    sns.set_style({'font.family':'serif', 'font.serif':'Arial'})
+    sns.set_style('whitegrid', {'legend.frameon':True})
+    sns.set(style='whitegrid', font_scale=2.5)
+    plt.figure(figsize=[14,7])
+    plt.xticks(rotation=60)
+    plt.xlabel('xlabel',visible=False)
+    sns.barplot(x="model", y="ci_acc", data=historical_acc, color=palette[0])
+    plt.ylabel("accuracy",weight='bold')
+    plt.ylim([0,1])
+    plt.title('Chairs',weight='bold')
+    plt.savefig('images/chairs.png')
+    plt.show()
     
