@@ -90,6 +90,13 @@ class ChairsInContext(data.Dataset):
         )
       
         if not os.path.isfile(cache_clean_data):
+            '''os.chdir('shapeglot/language')
+            dfs = [pd.read_csv(f, index_col=[0], parse_dates=[0])
+                for f in os.listdir(os.getcwd()) if f.endswith('csv')]
+            finaldf = pd.concat(dfs, axis=0, join='inner').sort_index()
+            os.chdir('..')
+            finaldf = finaldf.sample(frac=1).reset_index(drop=True)
+            finaldf.to_csv('chairs_group_data.csv')'''
             csv_path = os.path.join(self.data_dir, 'chairs_group_data.csv')
             df = pd.read_csv(csv_path)
             
