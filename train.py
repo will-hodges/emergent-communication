@@ -84,9 +84,9 @@ if __name__ == '__main__':
         
     elif args.dataset == 'shapeglot':
         data_dir = './data/shapeglot/data_1000_'
-        pretrain_data = np.reshape(np.array([data_dir + str(e) + '.npz' for e in range(3,6)]), (3,1)).tolist()
-        train_data = [data_dir + str(e) + '.npz' for e in range(0,3)]
-        val_data = [data_dir + str(e) + '.npz' for e in range(3,7)]
+        pretrain_data = [[data_dir + '0.npz']]
+        train_data = [data_dir + '1.npz']
+        val_data = [data_dir + '2.npz']
         
     elif args.dataset == 'colors':
         data_dir = './data/colors/data_1000_'
@@ -177,12 +177,19 @@ if __name__ == '__main__':
                     metrics['best_epoch'] = epoch
                     best_listener = copy.deepcopy(listener)
                     
+                all_metrics.append(metrics)
+                
                 if args.debug:
                     print(metrics)
 
             # Save the best model
             literal_listener = best_listener
             torch.save(literal_listener, output_file)
+            
+            if args.debug:
+                with open(args.save, "w") as txt_file:
+                    for line in all_metrics:
+                        txt_file.write(" ".join(line) + "\n")
             
     # Load Literal Listener
     if args.amortized or args.s0 or args.sl0:

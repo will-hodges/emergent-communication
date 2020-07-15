@@ -46,10 +46,7 @@ all_labels = None
 langs = None
 count = 0
 
-print(data.__getitem__(0))
-
 for i, (img, y, lang) in enumerate(data):
-    print(i)
     label = [0, 0, 0]
     label[y] = 1
     if all_imgs is None:
@@ -62,6 +59,7 @@ for i, (img, y, lang) in enumerate(data):
         langs = np.append(langs,np.array([lang.numpy()]),0)
     seq = []
     if (i+1)%1000 == 0:
+        print("Saving...")
         print(langs)
         data_dict = {'imgs': all_imgs, 'labels': all_labels, 'langs': langs}
         np.savez_compressed('./data/'+str(dataset)+'/data_1000_'+str(count)+'.npz', **data_dict)

@@ -307,10 +307,12 @@ class ChairsInContext(data.Dataset):
     def __getitem__(self, index):
         chair_a, chair_b, chair_c, target_chair, _ = self.data[index]
         label = self.labels[index]
+        
+        img_dir = os.path.join(self.data_dir + '_data', 'images/shapenet/03001627')
 
-        chair_a_pil = Image.open(glob(os.path.join(self.image_dir, chair_a) + '/*.png')[0]).convert('RGB')
-        chair_b_pil = Image.open(glob(os.path.join(self.image_dir, chair_a) + '/*.png')[0]).convert('RGB')
-        chair_c_pil = Image.open(glob(os.path.join(self.image_dir, chair_a) + '/*.png')[0]).convert('RGB')
+        chair_a_pil = Image.open(glob(os.path.join(img_dir, chair_a) + '/*.png')[0]).convert('RGB')
+        chair_b_pil = Image.open(glob(os.path.join(img_dir, chair_b) + '/*.png')[0]).convert('RGB')
+        chair_c_pil = Image.open(glob(os.path.join(img_dir, chair_c) + '/*.png')[0]).convert('RGB')
 
         chair_a_pt = self.image_transform(chair_a_pil)
         chair_b_pt = self.image_transform(chair_b_pil)

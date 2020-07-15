@@ -1,5 +1,6 @@
 data
 output
 shapeglot/images/*
+shapeglot_data/*
 shapeglot/vgg_fc7_pt.pkl
 images/*
