@@ -277,6 +277,16 @@ class ChairsInContext(data.Dataset):
         vocab = dict(w2i=w2i, i2w=i2w)
 
         return vocab
+    
+    def gettext(self, text):
+        tokens = []
+        for i in range(len(text)):
+            t = text[i]
+            p = ""
+            for w in (a for a in t.tolist() if a != self.pad_index):
+                p = p + self.i2w.get(w) + " "
+            tokens.append(p)
+        return tokens
 
     def _process_text(self, text):
         text_seq, text_len, raw_tokens = [], [], []

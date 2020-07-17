@@ -155,12 +155,22 @@ if __name__ == '__main__':
         
             for epoch in range(args.epochs):
                 # Train one epoch
-                data_file = file[0:len(file)-1]
+                if args.dataset != 'shapeglot':
+                    data_file = file[0:len(file)-1]
+                else:
+                    data_file = file
+                    
+                print('beginning training!')
+                
                 train_metrics, _ = run(data_file, 'train', 'l0', None, listener, optimizer, loss, vocab, args.batch_size, args.cuda, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
+                
+                print("train done; val beginning")
 
                 # Validate
                 data_file = [file[-1]]
                 val_metrics, _ = run(data_file, 'val', 'l0', None, listener, optimizer, loss, vocab, args.batch_size, args.cuda, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
+                
+                print('val done')
 
                 # Update metrics, prepending the split name
                 for metric, value in train_metrics.items():

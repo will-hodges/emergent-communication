@@ -16,6 +16,7 @@ import torch.optim as optim
 import models
 import vision
 import util
+from chairs import *
 from data import ShapeWorld
 import data
 
@@ -180,14 +181,24 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
             d = data.load_raw_data(file)
             if split == 'test':
                 dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
+                '''if dataset != 'shapeglot':
+                    dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
+                else:
+                    dataloader = DataLoader(ChairsInContext('./'+str(dataset), image_size = 64, vocab = vocab, split = 'test', context_condition = 'far', train_frac = .95, val_frac = .05, image_transform = None), batch_size=batch_size, shuffle=False)'''
             else:
                 dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=True)
+                '''if dataset != 'shapeglot':
+                    dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=True)
+                else:
+                    dataloader = DataLoader(ChairsInContext('./'+str(dataset), image_size = 64, vocab = vocab, split = 'train', context_condition = 'far', train_frac = .95, val_frac = .05, image_transform = None), batch_size=batch_size, shuffle=True)'''
                 
+            print(len(dataloader))
             for batch_i, (img, y, lang) in enumerate(dataloader):
                 batch_size = img.shape[0] 
                     
                 # Reformat inputs
-                y = y.argmax(1) # convert from onehot
+                if dataset != 'shapeglot':
+                    y = y.argmax(1) # convert from onehot
                 img = img.float() # convert to float
                 
                 if save_imgs == True:
@@ -235,11 +246,14 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     lis_scores = listener(img, lang, length)
                     if save_imgs == True:
                         if dataset != 'shapeglot':
-                            text = dataloader.dataset.to_text(lang.argmax(2))[0]
-                            text = text + "\n Target: 0, Guess: "
+                            text = dataloader.dataset.to_text(lang.argmax(2))[y.tolist()[0]]
+                            target = y.tolist()[0]
+                            text = text + f"\n Target: {target}, Guess: "
                         else:
-                            text = dataloader.dataset._process_text(lang.argmax(2))[0]
-                            text = text + "\n Target: 0, Guess: "
+                            print(dataloader.dataset._process_text(lang.argmax(2))[y.tolist()[0]])
+                            text = dataloader.dataset.gettext(lang.argmax(2))[y.tolist()[0]]
+                            target = y.tolist()[0]
+                            text = text + f"\n Target: {target}, Guess: "
                 elif model_type == 's0' or model_type == 'sl0':
                     lang_out = speaker(img, lang, length, y)
                 elif model_type == 'language_model':
@@ -310,19 +324,26 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
 
                 # Evaluate loss and accuracy
                 if model_type == 'l0':
-                    this_loss = loss(lis_scores, y)
+                    print(lis_scores)
+                    print(y)
+                    if dataset != 'shapeglot':
+                        this_loss = loss(lis_scores, y)
+                    else:
+                        print(y.argmax())
+                        this_loss = loss(lis_scores, y.argmax())
                     lis_pred = nn.functional.softmax(lis_scores).argmax(1)
                     this_acc = (lis_pred == y).float().mean().item()
                     
                     if save_imgs == True:
                         pred = lis_pred[0].item()
                         text = text + pred.__str__()
-                        path = "./images/" + datetime.now().__str__()
+                        path = "./images/" + dataset + "/" + datetime.now().__str__()
                         with open(path + ".txt", "w") as file:
                             print(f"{text}", file=file)
                         concat_img.save(path + '.png')
                     
                     if split == 'train':
+                        print("backprop")
                         # SGD step
                         this_loss.backward()
                         optimizer.step()
@@ -486,4 +507,5 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                 seq.append('<UNK>')
         if debug:
             print('Ground truth utterance: '+' '.join(seq))
+    print(f"metrics: {metrics}")
     return metrics, outputs

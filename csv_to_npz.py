@@ -16,6 +16,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from chairs import ChairsInContext
 
+from data import ShapeWorld
+
 import dataset as shapeglot
 
 dataset = 'shapeglot'

@@ -1,0 +1,2 @@
+best_acc,best_loss,best_epoch,train_loss,train_lm loss,train_acc,train_length,val_loss,val_lm loss,val_acc,val_length,current_epoch
+0.33853333333333335,9.06087589263916,0,6.162500381469727,0.0,0.32766666666666666,39.99406814575195,9.06087589263916,0.0,0.33853333333333335,40.0,0
