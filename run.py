@@ -197,8 +197,8 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                 batch_size = img.shape[0] 
                     
                 # Reformat inputs
-                if dataset != 'shapeglot':
-                    y = y.argmax(1) # convert from onehot
+                #if dataset != 'shapeglot':
+                y = y.argmax(1) # convert from onehot
                 img = img.float() # convert to float
                 
                 if save_imgs == True:

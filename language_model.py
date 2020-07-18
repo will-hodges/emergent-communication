@@ -61,7 +61,7 @@ if __name__ == '__main__':
     elif args.dataset == 'colors':
         language_model_data = ['./data/'+args.dataset+'/data_1000_0.npz','./data/'+args.dataset+'/data_1000_1.npz','./data/'+args.dataset+'/data_1000_2.npz','./data/'+args.dataset+'/data_1000_3.npz','./data/'+args.dataset+'/data_1000_4.npz','./data/'+args.dataset+'/data_1000_5.npz','./data/'+args.dataset+'/data_1000_6.npz','./data/'+args.dataset+'/data_1000_7.npz','./data/'+args.dataset+'/data_1000_8.npz','./data/'+args.dataset+'/data_1000_9.npz','./data/'+args.dataset+'/data_1000_10.npz','./data/'+args.dataset+'/data_1000_11.npz','./data/'+args.dataset+'/data_1000_12.npz','./data/'+args.dataset+'/data_1000_13.npz','./data/'+args.dataset+'/data_1000_14.npz']
     elif args.dataset == 'shapeglot':
-        language_model_data = ['./data/shapeglot/data_1000_' + str(e) + '.npz' for e in range(0,3)]
+        language_model_data = ['./data/shapeglot/data_1000_' + str(e) + '.npz' for e in range(0,24)]
         
     # Vocab
     vocab = torch.load('./models/'+str(args.dataset)+'/vocab.pt')

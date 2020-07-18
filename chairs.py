@@ -104,6 +104,7 @@ class ChairsInContext(data.Dataset):
             df = df.dropna()
 
             data = np.asarray(df)
+            
 
             print('Saving cleaned data to pickle.')
             with open(cache_clean_data, 'wb') as fp:
@@ -112,6 +113,7 @@ class ChairsInContext(data.Dataset):
             print('Loading cleaned data from pickle.')
             with open(cache_clean_data, 'rb') as fp:
                 data = pickle.load(fp)
+                
 
         if self.split_mode == 'easy':
             # for each unique chair, divide all rows containing it into training and test sets
