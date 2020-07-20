@@ -119,7 +119,7 @@ class ShapeWorld:
         lang = self.lang_idx[i]
         return (img, label, lang)
 
-    def to_text(self, idxs):
+    def to_text(self, idxs): # For non-shapeglot data
         texts = []
         for lang in idxs:
             toks = []
@@ -130,6 +130,17 @@ class ShapeWorld:
                 toks.append(self.i2w.get(i, UNK_TOKEN))
             texts.append(' '.join(toks))
         return texts
+    
+    def gettext(self, text): # For shapeglot data
+        tokens = []
+        pad_index = self.w2i["<NULL>"]
+        for i in range(len(text)):
+            t = text[i]
+            p = ""
+            for w in (a for a in t.tolist() if a != pad_index):
+                p = p + self.i2w.get(w) + " "
+            tokens.append(p)
+        return tokens
 
     def to_idx(self, langs):
         # Add SOS, EOS

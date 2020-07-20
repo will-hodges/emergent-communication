@@ -6,7 +6,7 @@ import data
 from data import ShapeWorld
 import statistics
 
-def evaluate(sl0, l0, data_file, vocab, batch_size, cuda):
+def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
     context = torch.no_grad()
     d = data.load_raw_data(data_file)
     dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
@@ -37,10 +37,17 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda):
                 lang = lang.cuda()
                 length = length.cuda()
 
-
             # Get speaker language
             lang_out = sl0(img, lang, length, y)
-            pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
+            if dataset != 'shapeglot':
+                pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
+                actual_text = dataloader.dataset.to_text(lang.argmax(2))[0]
+            else:
+                pred_text = dataloader.dataset.gettext(lang_out.argmax(2))[0]
+                actual_text = dataloader.dataset.gettext(lang.argmax(2))[0]
+            if debug:
+                print(f'Text from speaker: {pred_text}')
+                print(f'Actual text: {actual_text}')
             
             # Give language to listener and get prediction
             lis_scores = l0(img, lang_out, length)
@@ -49,8 +56,7 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda):
             correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
             acc = correct.count(True) / len(correct)
             historical_acc.append(acc)
-            print("L0 accuracy receiving text from SL0, batch %s: %s" % (batch_i, acc))
-        print("L0 mean accuracy receiving text from SL0: %s" % statistics.mean(historical_acc))
+        return historical_acc
     
 if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
@@ -60,6 +66,7 @@ if __name__ == '__main__':
     parser.add_argument('--l0', default='testing_models/pretrained_listener_0.pt', help='path to literal listener')
     parser.add_argument('--dataset', default='chairs', help='chairs, colors, shapeglot, or shapeworld')
     parser.add_argument('--cuda', action='store_true', help='run with cuda')
+    parser.add_argument('--debug', action='store_true', help='print output')
     parser.add_argument('--batch_size', default=32, type=int)
     args = parser.parse_args()
     
@@ -90,6 +97,10 @@ if __name__ == '__main__':
     sl0.eval()
     l0.eval()
     
+    historical_acc = []
+    
     for file in data_files:
-        evaluate(sl0, l0, file, vocab, args.batch_size, args.cuda)
+        historical_acc.extend(evaluate(sl0, l0, file, vocab, args.batch_size, args.cuda, args.dataset, args.debug))
+        
+    print(statistics.mean(historical_acc))
     

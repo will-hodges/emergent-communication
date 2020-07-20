@@ -181,16 +181,8 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
             d = data.load_raw_data(file)
             if split == 'test':
                 dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
-                '''if dataset != 'shapeglot':
-                    dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
-                else:
-                    dataloader = DataLoader(ChairsInContext('./'+str(dataset), image_size = 64, vocab = vocab, split = 'test', context_condition = 'far', train_frac = .95, val_frac = .05, image_transform = None), batch_size=batch_size, shuffle=False)'''
             else:
                 dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=True)
-                '''if dataset != 'shapeglot':
-                    dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=True)
-                else:
-                    dataloader = DataLoader(ChairsInContext('./'+str(dataset), image_size = 64, vocab = vocab, split = 'train', context_condition = 'far', train_frac = .95, val_frac = .05, image_transform = None), batch_size=batch_size, shuffle=True)'''
                 
             for batch_i, (img, y, lang) in enumerate(dataloader):
                 batch_size = img.shape[0] 
@@ -296,8 +288,8 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                                 langs = lang
                                 lang_lengths = lang_length
                 elif model_type == 'amortized':
-                    if penalty == None:
-                        lang, lang_length, eos_loss, lang_prob = speaker(img, y)
+                    if penalty == 'length':
+                        lang, lang_length, eos_loss, lang_prob = speaker(img, y, length_penalty=True)
                     else:
                         lang, lang_length, eos_loss, lang_prob = speaker(img, y)
                 elif model_type == 'test':
