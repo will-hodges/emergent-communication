@@ -84,9 +84,9 @@ if __name__ == '__main__':
         
     elif args.dataset == 'shapeglot':
         data_dir = './data/shapeglot/data_1000_'
-        pretrain_data = [[data_dir + '0.npz']]
-        train_data = [data_dir + '1.npz']
-        val_data = [data_dir + '2.npz']
+        pretrain_data = np.reshape(np.array([data_dir + str(e) + '.npz' for e in range(15,45)]), (3,10)).tolist()
+        train_data = [data_dir + str(e) + '.npz' for e in range(0,15)]
+        val_data = [data_dir + str(e) + '.npz' for e in range(15,30)]
         
     elif args.dataset == 'colors':
         data_dir = './data/colors/data_1000_'

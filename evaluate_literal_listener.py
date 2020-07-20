@@ -41,13 +41,9 @@ def evaluate(l0, data_file, vocab, batch_size, cuda, historical_acc):
             
             # Give language to listener and get prediction
             lis_scores = l0(img, lang, length)
-            lis_pred = F.softmax(lis_scores).argmax(1)
-            print(f"lis_pred: {lis_pred}")
-            print(f"y: {y}")
-            
+            lis_pred = F.softmax(lis_scores).argmax(1)            
             correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
             acc = correct.count(True) / len(correct)
-            print(acc)
             historical_acc.append(acc)
         return historical_acc
     
@@ -80,7 +76,7 @@ if __name__ == '__main__':
     if args.dataset != 'shapeglot':
         data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
     else:
-        data_files = [data_dir + str(e) + '.npz' for e in range(3,7)]
+        data_files = [data_dir + str(e) + '.npz' for e in range(0,24)]
     vocab = torch.load('./models/' + args.dataset + '/vocab.pt')
 
     

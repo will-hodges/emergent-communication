@@ -1,0 +1,6 @@
+best_acc best_loss best_epoch train_loss train_acc val_loss val_acc current_epoch
+best_acc best_loss best_epoch train_loss train_acc val_loss val_acc current_epoch
+best_acc best_loss best_epoch train_loss train_acc val_loss val_acc current_epoch
+best_acc best_loss best_epoch train_loss train_acc val_loss val_acc current_epoch
+best_acc best_loss best_epoch train_loss train_acc val_loss val_acc current_epoch
+best_acc best_loss best_epoch train_loss train_acc val_loss val_acc current_epoch

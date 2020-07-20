@@ -192,7 +192,6 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                 else:
                     dataloader = DataLoader(ChairsInContext('./'+str(dataset), image_size = 64, vocab = vocab, split = 'train', context_condition = 'far', train_frac = .95, val_frac = .05, image_transform = None), batch_size=batch_size, shuffle=True)'''
                 
-            print(len(dataloader))
             for batch_i, (img, y, lang) in enumerate(dataloader):
                 batch_size = img.shape[0] 
                     
@@ -250,7 +249,6 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                             target = y.tolist()[0]
                             text = text + f"\n Target: {target}, Guess: "
                         else:
-                            print(dataloader.dataset._process_text(lang.argmax(2))[y.tolist()[0]])
                             text = dataloader.dataset.gettext(lang.argmax(2))[y.tolist()[0]]
                             target = y.tolist()[0]
                             text = text + f"\n Target: {target}, Guess: "
@@ -324,16 +322,9 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
 
                 # Evaluate loss and accuracy
                 if model_type == 'l0':
-                    print(lis_scores)
-                    print(y)
-                    if dataset != 'shapeglot':
-                        this_loss = loss(lis_scores, y)
-                    else:
-                        print(y.argmax())
-                        this_loss = loss(lis_scores, y.argmax())
+                    this_loss = loss(lis_scores, y)
                     lis_pred = nn.functional.softmax(lis_scores).argmax(1)
                     this_acc = (lis_pred == y).float().mean().item()
-                    
                     if save_imgs == True:
                         pred = lis_pred[0].item()
                         text = text + pred.__str__()
@@ -343,7 +334,6 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         concat_img.save(path + '.png')
                     
                     if split == 'train':
-                        print("backprop")
                         # SGD step
                         this_loss.backward()
                         optimizer.step()
