@@ -22,14 +22,13 @@ if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
     parser = ArgumentParser(description='Convert .CSV file to processed .NPZ files', formatter_class=ArgumentDefaultsHelpFormatter)
-    
-    parser.add_argument('--data', default='shapeglot/chairs_group_data.csv', help='Path to .CSV file')
     parser.add_argument('--dataset', default='shapeglot', help='what dataset')
     parser.add_argument('--vocab', default='models/shapeglot/vocab.pt', help='Path to vocab file')
     parser.add_argument('--split', default=1000, help='When to save files')
     parser.add_argument('--image_size', default=64)
     parser.add_argument('--context_condition', default='all')
     parser.add_argument('--split_mode', default='easy')
+    parser.add_argument('--which_split', default='val')
     args = parser.parse_args()
     
     vocab = torch.load(args.vocab)
@@ -41,7 +40,7 @@ if __name__ == '__main__':
     else:
         raise Exception('Dataset '+args.dataset+' is not defined.')
     
-    data = DatasetClass('./'+str(args.dataset), image_size = args.image_size, vocab = vocab, split = 'train', context_condition = args.context_condition, train_frac = 1, val_frac = 0, image_transform = None)
+    data = DatasetClass('splits', image_size = args.image_size, vocab = vocab, split = 'train', context_condition = args.context_condition, train_frac = 1, val_frac = 0, image_transform = None, which_split=args.which_split)
     
     all_imgs = None
     all_labels = None
@@ -62,9 +61,8 @@ if __name__ == '__main__':
         seq = []
         if (i+1)%args.split == 0:
             print("Saving...")
-            print(langs)
             data_dict = {'imgs': all_imgs, 'labels': all_labels, 'langs': langs}
-            np.savez_compressed('./data/'+str(args.dataset)+'/data_1000_'+str(count)+'.npz', **data_dict)
+            np.savez_compressed('./data/'+str(args.dataset)+'/data_1000_'+args.which_split+'_'+str(count)+'.npz', **data_dict)
             count += 1
             all_imgs = None
             all_labels = None

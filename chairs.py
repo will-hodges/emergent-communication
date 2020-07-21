@@ -48,6 +48,7 @@ class ChairsInContext(data.Dataset):
             min_token_occ = 2,
             max_sent_len = 33,
             random_seed = 42,
+            which_split = 'val'
         ):
 
         super().__init__()
@@ -86,18 +87,17 @@ class ChairsInContext(data.Dataset):
 
         cache_clean_data = os.path.join(
             self.cache_dir,
-            f'clean_data_{self.context_condition}.pickle',
+            f'clean_data_{which_split}.pickle',
         )
       
         if not os.path.isfile(cache_clean_data):
-            '''os.chdir('shapeglot/language')
-            dfs = [pd.read_csv(f, index_col=[0], parse_dates=[0])
-                for f in os.listdir(os.getcwd()) if f.endswith('csv')]
+            os.chdir('splits')
+            dfs = [pd.read_csv(which_split + '.csv', index_col=[0], parse_dates=[0])]
             finaldf = pd.concat(dfs, axis=0, join='inner').sort_index()
-            os.chdir('..')
             finaldf = finaldf.sample(frac=1).reset_index(drop=True)
-            finaldf.to_csv('chairs_group_data.csv')'''
-            csv_path = os.path.join(self.data_dir, 'chairs_group_data.csv')
+            finaldf.to_csv(f'chairs_group_data_{which_split}.csv')
+            
+            csv_path = os.path.join(f'chairs_group_data_{which_split}.csv')
             df = pd.read_csv(csv_path)
             
             df = df[['chair_a', 'chair_b', 'chair_c', 'target_chair', 'glove_corrected_text']]
@@ -105,9 +105,10 @@ class ChairsInContext(data.Dataset):
 
             data = np.asarray(df)
             
-
+            os.chdir('cache')
+            
             print('Saving cleaned data to pickle.')
-            with open(cache_clean_data, 'wb') as fp:
+            with open(f'clean_data_{which_split}.pickle', 'wb') as fp:
                 pickle.dump(data, fp)
         else:
             print('Loading cleaned data from pickle.')
@@ -320,7 +321,7 @@ class ChairsInContext(data.Dataset):
         chair_a, chair_b, chair_c, target_chair, _ = self.data[index]
         label = self.labels[index]
         
-        img_dir = os.path.join(self.data_dir + '_data', 'images/shapenet/03001627')
+        img_dir = os.path.join('shapeglot_data', 'images/shapenet/03001627')
 
         chair_a_pil = Image.open(glob(os.path.join(img_dir, chair_a) + '/*.png')[0]).convert('RGB')
         chair_b_pil = Image.open(glob(os.path.join(img_dir, chair_b) + '/*.png')[0]).convert('RGB')

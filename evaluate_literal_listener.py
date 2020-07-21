@@ -8,8 +8,9 @@ import statistics
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-def evaluate(l0, data_file, vocab, batch_size, cuda, historical_acc):
+def evaluate(l0, data_file, vocab, batch_size, cuda):
     context = torch.no_grad()
+    historical_acc = []
     d = data.load_raw_data(data_file)
     dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
     
@@ -45,14 +46,16 @@ def evaluate(l0, data_file, vocab, batch_size, cuda, historical_acc):
             correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
             acc = correct.count(True) / len(correct)
             historical_acc.append(acc)
-        return historical_acc
-    
+        return statistics.mean(historical_acc)
+
 if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
     
     parser = ArgumentParser(description='Evaluate a literal speaker', formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('--l0', default='testing_models/pretrained_listener_0.pt', help='path to literal listener')
     parser.add_argument('--dataset', default='chairs', help='chairs, colors, shapeglot, or shapeworld')
+    parser.add_argument('--save', default='literal_listener_accuracy.png', help='path to savefile')
+    parser.add_argument('--plot_title', default='L0', help='title for plot')
     parser.add_argument('--cuda', action='store_true', help='run with cuda')
     parser.add_argument('--batch_size', default=32, type=int)
     args = parser.parse_args()
@@ -73,10 +76,8 @@ if __name__ == '__main__':
         raise Exception('Dataset ' + args.dataset + ' is not defined.')
         
     # Load .npz files and the vocab
-    if args.dataset != 'shapeglot':
-        data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
-    else:
-        data_files = [data_dir + str(e) + '.npz' for e in range(0,24)]
+    data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
+
     vocab = torch.load('./models/' + args.dataset + '/vocab.pt')
 
     
@@ -84,10 +85,19 @@ if __name__ == '__main__':
         l0.cuda()
     l0.eval()
     
-    historical_acc = []
+    x = []
+    y = []
     
+    epoch = 0                          
     for file in data_files:
-        historical_acc.extend(evaluate(l0, file, vocab, args.batch_size, args.cuda, historical_acc))
+        acc = evaluate(l0, file, vocab, args.batch_size, args.cuda)
+        x.append(epoch)
+        y.append(acc)
+        epoch += 1
         
-    print(statistics.mean(historical_acc))
+    plt.plot(x,y, '-bo')
+    plt.title(args.plot_title)
+    plt.xlabel("epochs")
+    plt.ylabel("accuracy")
+    plt.savefig(args.save)
     

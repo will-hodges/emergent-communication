@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import data
 from data import ShapeWorld
 import statistics
+import matplotlib.pyplot as plt
 
 def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
     context = torch.no_grad()
@@ -56,7 +57,7 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
             correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
             acc = correct.count(True) / len(correct)
             historical_acc.append(acc)
-        return historical_acc
+        return statistics.mean(historical_acc)
     
 if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
@@ -65,6 +66,8 @@ if __name__ == '__main__':
     parser.add_argument('--sl0', default='testing_models/actual_literal_speaker.pt', help='path to literal speaker')
     parser.add_argument('--l0', default='testing_models/pretrained_listener_0.pt', help='path to literal listener')
     parser.add_argument('--dataset', default='chairs', help='chairs, colors, shapeglot, or shapeworld')
+    parser.add_argument('--plot_title', default='S0', help='title for plot')
+    parser.add_argument('--save', default='literal_speaker_accuracy.png', help='path to savefile')
     parser.add_argument('--cuda', action='store_true', help='run with cuda')
     parser.add_argument('--debug', action='store_true', help='print output')
     parser.add_argument('--batch_size', default=32, type=int)
@@ -97,10 +100,18 @@ if __name__ == '__main__':
     sl0.eval()
     l0.eval()
     
-    historical_acc = []
+    y = []
+    x = []
     
+    epoch = 0
     for file in data_files:
-        historical_acc.extend(evaluate(sl0, l0, file, vocab, args.batch_size, args.cuda, args.dataset, args.debug))
+        y.append(evaluate(sl0, l0, file, vocab, args.batch_size, args.cuda, args.dataset, args.debug))
+        x.append(epoch)
+        epoch += 1
         
-    print(statistics.mean(historical_acc))
+    plt.plot(x,y, '-bo')
+    plt.title(args.plot_title)
+    plt.xlabel("epochs")
+    plt.ylabel("accuracy")
+    plt.savefig(args.save)
     

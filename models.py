@@ -37,7 +37,7 @@ def to_onehot(y, n=3):
 
 
 class Speaker(nn.Module):
-    def __init__(self, feat_model, embedding_module, hidden_size=100):
+    def __init__(self, feat_model, embedding_module, hidden_size=512):
         super(Speaker, self).__init__()
         self.embedding = embedding_module
         self.feat_model = feat_model
@@ -231,7 +231,7 @@ class Speaker(nn.Module):
 
 
 class LiteralSpeaker(nn.Module):
-    def __init__(self, feat_model, embedding_module, hidden_size=100, contextual=True):
+    def __init__(self, feat_model, embedding_module, hidden_size=512, contextual=True):
         super(LiteralSpeaker, self).__init__()
         self.contextual = contextual
         
