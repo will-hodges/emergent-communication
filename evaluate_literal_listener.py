@@ -7,6 +7,8 @@ from data import ShapeWorld
 import statistics
 import seaborn as sns
 import matplotlib.pyplot as plt
+from glob import glob
+import os
 
 def evaluate(l0, data_file, vocab, batch_size, cuda):
     context = torch.no_grad()
@@ -76,7 +78,10 @@ if __name__ == '__main__':
         raise Exception('Dataset ' + args.dataset + ' is not defined.')
         
     # Load .npz files and the vocab
-    data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
+    if args.dataset != 'shapeglot':
+        data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
+    else:
+        data_files = glob(os.path.join('data/shapeglot/*_val_*.npz'))
 
     vocab = torch.load('./models/' + args.dataset + '/vocab.pt')
 
@@ -95,9 +100,9 @@ if __name__ == '__main__':
         y.append(acc)
         epoch += 1
         
-    plt.plot(x,y, '-bo')
+    plt.bar(x,y)
     plt.title(args.plot_title)
-    plt.xlabel("epochs")
+    plt.xlabel("split")
     plt.ylabel("accuracy")
     plt.savefig(args.save)
     
