@@ -54,8 +54,8 @@ if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
     
     parser = ArgumentParser(description='Evaluate a literal speaker', formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--l0', default='testing_models/pretrained_listener_0.pt', help='path to literal listener')
-    parser.add_argument('--dataset', default='chairs', help='chairs, colors, shapeglot, or shapeworld')
+    parser.add_argument('--l0', default='models/shapeglot/pretrained_listener_0.pt', help='path to literal listener')
+    parser.add_argument('--dataset', default='shapeglot', help='chairs, colors, shapeglot, or shapeworld')
     parser.add_argument('--save', default='literal_listener_accuracy.png', help='path to savefile')
     parser.add_argument('--plot_title', default='L0', help='title for plot')
     parser.add_argument('--cuda', action='store_true', help='run with cuda')
@@ -81,7 +81,7 @@ if __name__ == '__main__':
     if args.dataset != 'shapeglot':
         data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
     else:
-        data_files = glob(os.path.join('data/shapeglot/*_val_*.npz'))
+        data_files = glob(os.path.join('data/shapeglot/*_test_*.npz'))
 
     vocab = torch.load('./models/' + args.dataset + '/vocab.pt')
 

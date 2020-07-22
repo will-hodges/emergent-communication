@@ -23,6 +23,9 @@ from colors import ColorsInContext
 from run import run
 import models
 
+from glob import glob
+import os
+
 def init_metrics():
     """
     Initialize the metrics for this training run. This is a defaultdict, so
@@ -84,9 +87,10 @@ if __name__ == '__main__':
         
     elif args.dataset == 'shapeglot':
         data_dir = './data/shapeglot/data_1000_'
-        pretrain_data = np.reshape(np.array([data_dir + str(e) + '.npz' for e in range(15,45)]), (3,10)).tolist()
-        train_data = [data_dir + str(e) + '.npz' for e in range(0,15)]
-        val_data = [data_dir + str(e) + '.npz' for e in range(15,30)]
+        pt = np.array(glob(os.path.join(f'data/shapeglot/*_train_*.npz')))[:-2]
+        pretrain_data = np.reshape(pt, (3,int(len(pt)/3))).tolist()
+        train_data = glob(os.path.join(f'data/shapeglot/*_test_*.npz'))
+        val_data = glob(os.path.join(f'data/shapeglot/*_val_*.npz'))
         
     elif args.dataset == 'colors':
         data_dir = './data/colors/data_1000_'
@@ -131,6 +135,7 @@ if __name__ == '__main__':
     # Initialize Metrics
     metrics = init_metrics()
     all_metrics = []
+    last_five = []
 
     # Pretrain Literal Listener
     if args.l0:
@@ -139,7 +144,7 @@ if __name__ == '__main__':
             output_files = [output_dir+'0.pt', output_dir+'1.pt']
         else:
             output_dir = './models/'+args.dataset+'/pretrained_listener_'
-            output_files = [output_dir+'0.pt', output_dir+'1.pt', output_dir+'2.pt', output_dir+'3.pt', output_dir+'4.pt', output_dir+'5.pt', output_dir+'6.pt', output_dir+'7.pt', output_dir+'8.pt', output_dir+'9.pt', output_dir+'10.pt']
+            output_files = [output_dir+'0.pt', output_dir+'1.pt', output_dir+'2.pt']
         
 
         for file, output_file in zip(pretrain_data,output_files):
@@ -191,15 +196,30 @@ if __name__ == '__main__':
                 
                 if args.debug:
                     print(metrics)
+                
+                # Early stopping
+                if (len(last_five) == 5):
+                    last_five.pop(0)
+                    last_five.append(round(val_metrics['acc'], 2))
+                else:
+                    last_five.append(round(val_metrics['acc'], 2))
+                    
+                if round(val_metrics['acc'], 2) == 1.0:
+                    break
+                
+                if len(last_five) == 5:
+                    if (last_five[0] - last_five[4]) <= 0:
+                        # If not decreasing for last five
+                        break
 
             # Save the best model
             literal_listener = best_listener
             torch.save(literal_listener, output_file)
             
-            if args.debug:
-                with open(args.save, "w") as txt_file:
-                    for line in all_metrics:
-                        txt_file.write(" ".join(line) + "\n")
+            metrics_last = {k: v[-1] if isinstance(v, list) else v
+                            for k, v in metrics.items()}
+            all_metrics.append(metrics_last)
+            pd.DataFrame(all_metrics).to_csv(args.save, index=False)
             
     # Load Literal Listener
     if args.amortized or args.s0 or args.sl0:
@@ -236,6 +256,21 @@ if __name__ == '__main__':
 
             if args.debug:
                 print(metrics)
+                
+            # Early stopping
+            if (len(last_five) == 5):
+                last_five.pop(0)
+                last_five.append(round(val_metrics['acc'], 2))
+            else:
+                last_five.append(round(val_metrics['acc'], 2))
+            
+            if round(val_metrics['acc'], 2) == 1.0:
+                break
+            
+            if len(last_five) == 5:
+                if (last_five[0] - last_five[4]) <= 0:
+                    # If not decreasing for last five
+                    break
 
             # Store metrics
             metrics_last = {k: v[-1] if isinstance(v, list) else v
@@ -274,6 +309,21 @@ if __name__ == '__main__':
 
             if args.debug:
                 print(metrics)
+                
+            # Early stopping
+            if (len(last_five) == 5):
+                last_five.pop(0)
+                last_five.append(round(val_metrics['acc'], 2))
+            else:
+                last_five.append(round(val_metrics['acc'], 2))
+            
+            if round(val_metrics['acc'], 2) == 1.0:
+                break
+            
+            if len(last_five) == 5:
+                if (last_five[0] - last_five[4]) <= 0:
+                    # If not decreasing for last five
+                    break
 
             # Store metrics
             metrics_last = {k: v[-1] if isinstance(v, list) else v
@@ -313,6 +363,22 @@ if __name__ == '__main__':
 
             if args.debug:
                 print(metrics)
+                
+                
+            # Early stopping
+            if (len(last_five) == 5):
+                last_five.pop(0)
+                last_five.append(round(val_metrics['acc'], 2))
+            else:
+                last_five.append(round(val_metrics['acc'], 2))
+                
+            if round(val_metrics['acc'], 2) == 1.0:
+                break
+                
+            if len(last_five) == 5:
+                if (last_five[0] - last_five[4]) <= 0:
+                    # If not decreasing for last five
+                    break
 
             # Store metrics
             metrics_last = {k: v[-1] if isinstance(v, list) else v
@@ -338,4 +404,5 @@ if __name__ == '__main__':
             random_file = str(np.random.randint(0,1000))
             print('failed saving, now saving at '+random_file+'.pt')
             torch.save(best_speaker, './models/'+random_file+'.pt')
+
 
