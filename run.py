@@ -333,7 +333,10 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
                 elif model_type == 's0' or model_type == 'sl0' or model_type == 'language_model':
-                    lis_scores = listener(img, lang_out, length)
+                    
+                    sampled_lang, _ = speaker.sample(img, y, greedy=True)
+                    
+                    lis_scores = listener(img, sampled_lang, length)
                     lis_scores_given_ground_truth = listener(img, lang, length)
                     lis_pred = F.softmax(lis_scores).argmax(1)
                     lis_pred_0 = F.softmax(lis_scores_given_ground_truth).argmax(1)
@@ -345,10 +348,10 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     this_acc_0 = correct_0.count(True) / len(correct_0)
                     
                     if dataset != 'shapeglot':
-                        pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
+                        pred_text = dataloader.dataset.to_text(sampled_lang.argmax(2))[0] # Human readable
                         actual_text = dataloader.dataset.to_text(lang.argmax(2))[0]
                     else:
-                        pred_text = dataloader.dataset.gettext(lang_out.argmax(2))[0]
+                        pred_text = dataloader.dataset.gettext(sampled_lang.argmax(2))[0]
                         actual_text = dataloader.dataset.gettext(lang.argmax(2))[0]
                     
                     lang_out = lang_out[:, :-1].contiguous()
@@ -358,8 +361,6 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     lang = lang.long().view(batch_size*lang.size(1), len(vocab['w2i'].keys()))
                     
                     
-                    print(lang_out.shape)
-                    print(torch.max(lang, 1)[1].shape)
                     this_loss = loss(lang_out.cuda(), torch.max(lang, 1)[1].cuda())
 
                     if split == 'train':
@@ -369,7 +370,6 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         
                     lang_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
                     if debug:
-                        ''''
                         print(f'true language: {actual_text}')
                         print(f'sampled language: {pred_text}')
                         print(f'lis_pred (sampled lang): {lis_pred}')
@@ -378,7 +378,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         print(f'acc (sampled lang): {this_acc}')
                         print(f'acc (ground truth lang): {this_acc_0}')
                         print(f'lang_acc (sampled lang): {lang_acc}')
-                        print('----------')'''
+                        print('----------')
                     
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)

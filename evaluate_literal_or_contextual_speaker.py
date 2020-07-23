@@ -42,7 +42,8 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
                 length = length.cuda()
 
             # Get speaker language
-            lang_out = sl0(img, lang, length, y)
+            #lang_out = sl0(img, lang, length, y)
+            lang_out, _ = sl0.sample(img, y, greedy=True)
             if dataset != 'shapeglot':
                 pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
                 actual_text = dataloader.dataset.to_text(lang.argmax(2))[0]
@@ -96,7 +97,7 @@ if __name__ == '__main__':
     if args.dataset != 'shapeglot':
         data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
     else:
-        data_files = glob(os.path.join('data/shapeglot/*_val_*.npz'))[0:6]
+        data_files = glob(os.path.join('data/shapeglot/*_val_*.npz'))
     vocab = torch.load('./models/' + args.dataset + '/vocab.pt')
 
     
