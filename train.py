@@ -234,10 +234,10 @@ if __name__ == '__main__':
     if args.sl0:
         for epoch in range(args.epochs):
             # Train one epoch
-            train_metrics, _ = run(train_data, 'train', 'sl0', speaker, literal_listener, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs)
+            train_metrics, _ = run(train_data, 'train', 'sl0', speaker, literal_listener, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
             
             # Validate
-            val_metrics, _ = run(val_data, 'val', 'sl0', speaker, literal_listener_val, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs)
+            val_metrics, _ = run(val_data, 'val', 'sl0', speaker, literal_listener_val, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
             
             # Update metrics, prepending the split name
             for metric, value in train_metrics.items():

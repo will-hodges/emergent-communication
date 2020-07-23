@@ -93,7 +93,7 @@ def _generate_utterance(token_1, token_2, batch_size, max_len):
     lang_length = lang_length.unsqueeze(0)
     return lang, lang_length
 
-def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab, batch_size, cuda, num_samples = None, srr = True, lmbd = None, test_type = None, activation = 'gumbel', ci = True, dataset = 'shapeworld', penalty = None, tau = 1, generalization = None, debug = False, save_imgs = False):
+def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab, batch_size, cuda, num_samples = None, srr = True, lmbd = None, test_type = None, activation = 'gumbel', ci = True, dataset = 'shapeglot', penalty = None, tau = 1, generalization = None, debug = False, save_imgs = False):
     """
     Run the model for a single epoch.
     Parameters
@@ -334,15 +334,32 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     meters['acc'].update(this_acc, batch_size)
                 elif model_type == 's0' or model_type == 'sl0' or model_type == 'language_model':
                     lis_scores = listener(img, lang_out, length)
+                    lis_scores_given_ground_truth = listener(img, lang, length)
                     lis_pred = F.softmax(lis_scores).argmax(1)
+                    lis_pred_0 = F.softmax(lis_scores_given_ground_truth).argmax(1)
                     
                     correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
                     this_acc = correct.count(True) / len(correct)
                     
+                    correct_0 = [a == b for a, b in zip(lis_pred_0.tolist(), y.tolist())]
+                    this_acc_0 = correct_0.count(True) / len(correct_0)
+                    
+                    if dataset != 'shapeglot':
+                        pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
+                        actual_text = dataloader.dataset.to_text(lang.argmax(2))[0]
+                    else:
+                        pred_text = dataloader.dataset.gettext(lang_out.argmax(2))[0]
+                        actual_text = dataloader.dataset.gettext(lang.argmax(2))[0]
+                    
                     lang_out = lang_out[:, :-1].contiguous()
                     lang = lang[:, 1:].contiguous()
+                    
                     lang_out = lang_out.view(batch_size*lang_out.size(1), len(vocab['w2i'].keys()))
                     lang = lang.long().view(batch_size*lang.size(1), len(vocab['w2i'].keys()))
+                    
+                    
+                    print(lang_out.shape)
+                    print(torch.max(lang, 1)[1].shape)
                     this_loss = loss(lang_out.cuda(), torch.max(lang, 1)[1].cuda())
 
                     if split == 'train':
@@ -350,6 +367,18 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         this_loss.backward()
                         optimizer.step()
                         
+                    lang_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
+                    if debug:
+                        ''''
+                        print(f'true language: {actual_text}')
+                        print(f'sampled language: {pred_text}')
+                        print(f'lis_pred (sampled lang): {lis_pred}')
+                        print(f'lis_pred (ground truth lang): {lis_pred_0}')
+                        print(f'target: {y}')
+                        print(f'acc (sampled lang): {this_acc}')
+                        print(f'acc (ground truth lang): {this_acc_0}')
+                        print(f'lang_acc (sampled lang): {lang_acc}')
+                        print('----------')'''
                     
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
