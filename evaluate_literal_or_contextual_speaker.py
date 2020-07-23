@@ -96,7 +96,7 @@ if __name__ == '__main__':
     if args.dataset != 'shapeglot':
         data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
     else:
-        data_files = glob(os.path.join('data/shapeglot/*_val_*.npz'))
+        data_files = glob(os.path.join('data/shapeglot/*_val_*.npz'))[0:6]
     vocab = torch.load('./models/' + args.dataset + '/vocab.pt')
 
     

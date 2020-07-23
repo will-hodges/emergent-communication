@@ -333,6 +333,12 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
                 elif model_type == 's0' or model_type == 'sl0' or model_type == 'language_model':
+                    lis_scores = listener(img, lang_out, length)
+                    lis_pred = F.softmax(lis_scores).argmax(1)
+                    
+                    correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
+                    this_acc = correct.count(True) / len(correct)
+                    
                     lang_out = lang_out[:, :-1].contiguous()
                     lang = lang[:, 1:].contiguous()
                     lang_out = lang_out.view(batch_size*lang_out.size(1), len(vocab['w2i'].keys()))
@@ -344,8 +350,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         this_loss.backward()
                         optimizer.step()
                         
-                    this_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
-
+                    
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
                 else:

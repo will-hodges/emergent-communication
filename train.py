@@ -47,9 +47,9 @@ if __name__ == '__main__':
 
     parser = ArgumentParser(description='Train', formatter_class=ArgumentDefaultsHelpFormatter)
     
-    parser.add_argument('--dataset', default='chairs', help='(shapeworld, colors, shapeglot, or chairs)')
+    parser.add_argument('--dataset', default='shapeglot', help='(shapeworld, colors, shapeglot, or chairs)')
     parser.add_argument('--batch_size', default=32, type=int)
-    parser.add_argument('--epochs', default=5, type=int)
+    parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--lr', default=0.001, type=float, help='Learning rate')
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--vocab', action='store_true', help='Generate new vocab file')
