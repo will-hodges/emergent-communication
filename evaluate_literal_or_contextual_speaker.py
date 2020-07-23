@@ -43,7 +43,7 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
 
             # Get speaker language
             #lang_out = sl0(img, lang, length, y)
-            lang_out, _ = sl0.sample(img, y, greedy=True)
+            lang_out, lang_out_length = sl0.sample(img, y, greedy=True)
             if dataset != 'shapeglot':
                 pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
                 actual_text = dataloader.dataset.to_text(lang.argmax(2))[0]
@@ -55,7 +55,7 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
                 print(f'Actual text: {actual_text}')
             
             # Give language to listener and get prediction
-            lis_scores = l0(img, lang_out, length)
+            lis_scores = l0(img, lang_out, lang_out_length)
             lis_pred = F.softmax(lis_scores).argmax(1)
             
             correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
