@@ -88,7 +88,7 @@ if __name__ == '__main__':
     elif args.dataset == 'shapeglot':
         data_dir = './data/shapeglot/data_1000_'
         pt = np.array(glob(os.path.join(f'data/shapeglot/*_train_*.npz')))[:-2]
-        pretrain_data = np.reshape(pt, (3,int(len(pt)/3))).tolist()
+        pretrain_data = np.reshape(pt[:30], (3,int(len(pt[:30])/3))).tolist()
         train_data = glob(os.path.join(f'data/shapeglot/*_test_*.npz'))
         val_data = glob(os.path.join(f'data/shapeglot/*_val_*.npz'))
         
@@ -197,7 +197,7 @@ if __name__ == '__main__':
                 if args.debug:
                     print(metrics)
                 
-                # Early stopping
+                '''# Early stopping
                 if (len(last_five) == 5):
                     last_five.pop(0)
                     last_five.append(round(val_metrics['acc'], 2))
@@ -210,7 +210,7 @@ if __name__ == '__main__':
                 if len(last_five) == 5:
                     if (last_five[0] - last_five[4]) <= 0:
                         # If not decreasing for last five
-                        break
+                        break'''
 
             # Save the best model
             literal_listener = best_listener
@@ -257,7 +257,7 @@ if __name__ == '__main__':
             if args.debug:
                 print(metrics)
                 
-            # Early stopping
+            ''' # Early stopping
             if (len(last_five) == 5):
                 last_five.pop(0)
                 last_five.append(round(val_metrics['acc'], 2))
@@ -268,9 +268,9 @@ if __name__ == '__main__':
                 break
             
             if len(last_five) == 5:
-                if (last_five[0] - last_five[4]) <= 0:
+                if (last_five == sorted(last_five, reverse=True)):
                     # If not decreasing for last five
-                    break
+                    break'''
 
             # Store metrics
             metrics_last = {k: v[-1] if isinstance(v, list) else v
@@ -310,7 +310,7 @@ if __name__ == '__main__':
             if args.debug:
                 print(metrics)
                 
-            # Early stopping
+            '''# Early stopping
             if (len(last_five) == 5):
                 last_five.pop(0)
                 last_five.append(round(val_metrics['acc'], 2))
@@ -321,9 +321,9 @@ if __name__ == '__main__':
                 break
             
             if len(last_five) == 5:
-                if (last_five[0] - last_five[4]) <= 0:
+                if (last_five == sorted(last_five, reverse=True)):
                     # If not decreasing for last five
-                    break
+                    break'''
 
             # Store metrics
             metrics_last = {k: v[-1] if isinstance(v, list) else v
@@ -365,20 +365,20 @@ if __name__ == '__main__':
                 print(metrics)
                 
                 
-            # Early stopping
+            '''# Early stopping
             if (len(last_five) == 5):
                 last_five.pop(0)
                 last_five.append(round(val_metrics['acc'], 2))
             else:
                 last_five.append(round(val_metrics['acc'], 2))
-                
+            
             if round(val_metrics['acc'], 2) == 1.0:
                 break
-                
+            
             if len(last_five) == 5:
-                if (last_five[0] - last_five[4]) <= 0:
+                if (last_five == sorted(last_five, reverse=True)):
                     # If not decreasing for last five
-                    break
+                    break'''
 
             # Store metrics
             metrics_last = {k: v[-1] if isinstance(v, list) else v

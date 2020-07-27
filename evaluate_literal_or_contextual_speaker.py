@@ -44,6 +44,9 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
             # Get speaker language
             #lang_out = sl0(img, lang, length, y)
             lang_out, lang_out_length = sl0.sample(img, y, greedy=True)
+            
+            print(lang_out.shape)
+            
             if dataset != 'shapeglot':
                 pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
                 actual_text = dataloader.dataset.to_text(lang.argmax(2))[0]
@@ -60,6 +63,15 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
             
             correct = [a == b for a, b in zip(lis_pred.tolist(), y.tolist())]
             acc = correct.count(True) / len(correct)
+            
+            lang_out = lang_out.cpu()
+            lang = lang.cpu()
+            
+            this_acc = (lang_out.argmax(2)==lang.argmax(2)).float().mean().item()
+            
+            print(f'com acc: {acc}')
+            print(f'lang acc: {this_acc}')
+            
             historical_acc.append(acc)
         return statistics.mean(historical_acc)
     
@@ -67,9 +79,9 @@ if __name__ == '__main__':
     from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
     
     parser = ArgumentParser(description='Evaluate a literal speaker', formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--sl0', default='testing_models/actual_literal_speaker.pt', help='path to literal speaker')
-    parser.add_argument('--l0', default='testing_models/pretrained_listener_0.pt', help='path to literal listener')
-    parser.add_argument('--dataset', default='chairs', help='chairs, colors, shapeglot, or shapeworld')
+    parser.add_argument('--sl0', default='models/shapeglot/actual_literal_speaker.pt', help='path to literal speaker')
+    parser.add_argument('--l0', default='models/shapeglot/pretrained_listener_0.pt', help='path to literal listener')
+    parser.add_argument('--dataset', default='shapeglot', help='chairs, colors, shapeglot, or shapeworld')
     parser.add_argument('--plot_title', default='S0', help='title for plot')
     parser.add_argument('--save', default='literal_speaker_accuracy.png', help='path to savefile')
     parser.add_argument('--cuda', action='store_true', help='run with cuda')
@@ -97,7 +109,7 @@ if __name__ == '__main__':
     if args.dataset != 'shapeglot':
         data_files = [data_dir + str(e) + '.npz' for e in range(15,30)]
     else:
-        data_files = glob(os.path.join('data/shapeglot/*_val_*.npz'))
+        data_files = glob(os.path.join('data/shapeglot/*_train_*.npz'))[0:7]
     vocab = torch.load('./models/' + args.dataset + '/vocab.pt')
 
     
