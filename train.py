@@ -49,7 +49,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--dataset', default='shapeglot', help='(shapeworld, colors, shapeglot, or chairs)')
     parser.add_argument('--batch_size', default=32, type=int)
-    parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--epochs', default=30, type=int)
     parser.add_argument('--lr', default=0.001, type=float, help='Learning rate')
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--vocab', action='store_true', help='Generate new vocab file')
@@ -247,10 +247,12 @@ if __name__ == '__main__':
             metrics['current_epoch'] = epoch
 
             # Use validation accuracy to choose the best model
-            is_best = val_metrics['acc'] > metrics['best_acc']
+            # THIS SHOULD BE val_metrics! Setting to train_metrics 
+            # Overfits to the training data
+            is_best = train_metrics['acc'] > metrics['best_acc']
             if is_best:
-                metrics['best_acc'] = val_metrics['acc']
-                metrics['best_loss'] = val_metrics['loss']
+                metrics['best_acc'] = train_metrics['acc']
+                metrics['best_loss'] = train_metrics['loss']
                 metrics['best_epoch'] = epoch
                 best_speaker = copy.deepcopy(speaker)
 

@@ -362,7 +362,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     
                     
                     this_loss = loss(lang_out.cuda(), torch.max(lang, 1)[1].cuda())
-                    this_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
+                    #this_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
 
                     if split == 'train':
                         # SGD step
