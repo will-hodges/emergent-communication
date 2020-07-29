@@ -8,7 +8,7 @@ import statistics
 import matplotlib.pyplot as plt
 from glob import glob
 import os
-
+from torch.nn.utils.rnn import pack_padded_sequence
 
 def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
     context = torch.no_grad()
@@ -67,7 +67,15 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
             lang_out = lang_out.cpu()
             lang = lang.cpu()
             
-            this_acc = (lang_out.argmax(2)==lang.argmax(2)).float().mean().item()
+            lang_out = pack_padded_sequence(lang_out, length - 1,
+                                                   batch_first=True, enforce_sorted=False)
+            lang = pack_padded_sequence(lang, length - 1,
+                                               batch_first=True,
+                                               enforce_sorted=False)
+            lang_out = lang_out.data
+            lang = lang.data
+            
+            this_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
             
             print(f'com acc: {acc}')
             print(f'lang acc: {this_acc}')

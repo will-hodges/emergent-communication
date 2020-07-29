@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
+from torch.nn.utils.rnn import pack_padded_sequence
 
 import models
 import vision
@@ -171,14 +172,21 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
             meters = {'loss':[], 'acc':[], 'prob':[], 'length':[], 'colors':[], 'shapes':[], 'time':[]}
     else:
         if model_type == 's0' or model_type == 'language_model' or model_type == 'l0' or model_type == 'sl0':
-            measures = ['loss', 'acc']
+            measures = ['loss', 'acc', 'lang_acc']
         else:
             measures = ['loss', 'lm loss', 'acc', 'length']
         meters = {m: util.AverageMeter() for m in measures}
 
     with context:
-        for file in data_file:
+        # FIXME TODO - limited data_file (should be for file in data_file)
+        for file in [data_file[0]]:
             d = data.load_raw_data(file)
+            # FIXME TODO - limited dataset
+            d = {
+                'imgs': d['imgs'][:50],
+                'labels': d['labels'][:50],
+                'langs': d['langs'][:50]
+            }
             if split == 'test':
                 dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
             else:
@@ -357,12 +365,22 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     lang_out = lang_out[:, :-1].contiguous()
                     lang = lang[:, 1:].contiguous()
                     
-                    lang_out = lang_out.view(batch_size*lang_out.size(1), len(vocab['w2i'].keys()))
-                    lang = lang.long().view(batch_size*lang.size(1), len(vocab['w2i'].keys()))
+
+                    lang_out = pack_padded_sequence(lang_out, length - 1,
+                                                   batch_first=True, enforce_sorted=False)
+                    lang = pack_padded_sequence(lang, length - 1,
+                                               batch_first=True,
+                                               enforce_sorted=False)
+                    lang_out = lang_out.data
+                    lang = lang.data
+                    #  lang_out = lang_out.view(batch_size*lang_out.size(1), len(vocab['w2i'].keys()))
+                    #  lang = lang.long().view(batch_size*lang.size(1), len(vocab['w2i'].keys()))
                     
                     
                     this_loss = loss(lang_out.cuda(), torch.max(lang, 1)[1].cuda())
-                    #this_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
+                    
+                    
+                    lang_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
 
                     if split == 'train':
                         # SGD step
@@ -370,19 +388,21 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         optimizer.step()
                         
                     lang_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
-                    '''if debug:
-                        print(f'true language: {actual_text}')
+                    if debug:
+                        '''print(f'true language: {actual_text}')
                         print(f'sampled language: {pred_text}')
                         print(f'lis_pred (sampled lang): {lis_pred}')
                         print(f'lis_pred (ground truth lang): {lis_pred_0}')
                         print(f'target: {y}')
                         print(f'acc (sampled lang): {this_acc}')
-                        print(f'acc (ground truth lang): {this_acc_0}')
-                        print(f'lang_acc (sampled lang): {lang_acc}')
-                        print('----------')'''
+                        print(f'lang_out.argmax(1): {lang_out.argmax(1)}')
+                        print(f'lang.argmax(1): {lang.argmax(1)}')'''
+                        print(f'lang_acc: {lang_acc}')
+                        print('----------')
                     
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
+                    meters['lang_acc'].update(lang_acc, batch_size)
                 else:
                     if model_type == 'sample' or model_type == 'rsa' or model_type == 'test':
                         if not (model_type == 'sample' and num_samples == 1):

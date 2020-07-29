@@ -172,7 +172,9 @@ if __name__ == '__main__':
                 print("train done; val beginning")
 
                 # Validate
+                print(data_file)
                 data_file = [file[-1]]
+                print(data_file)
                 val_metrics, _ = run(data_file, 'val', 'l0', None, listener, optimizer, loss, vocab, args.batch_size, args.cuda, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
                 
                 print('val done')

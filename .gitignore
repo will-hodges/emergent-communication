@@ -2,6 +2,7 @@ shapeglot_data.zip
 emergent-communication-old/shapeglot_data.zip
 data
 output
+outputs/*
 shapeglot/images/*
 shapeglot_data/*
 shapeglot/vgg_fc7_pt.pkl
