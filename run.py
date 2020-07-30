@@ -465,6 +465,15 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         if split == 'train' and model_type == 'amortized' and activation == 'multinomial': # Reinforce
                             end = time.time()
                             lis_scores = listener(img, lang, lang_length, average=False)
+                            seq = []
+                            for word_index in lang[0,:].cpu().detach().numpy():
+                                word_index = word_index.argmax(0)
+                                try:
+                                    seq.append(vocab['i2w'][word_index])
+                                except:
+                                    seq.append('<UNK>')
+                            if debug:
+                                print('Generated utterance: '+' '.join(seq))
                         elif split == 'train' and model_type == 'amortized' and activation != 'gumbel' and activation != None:
                             end = time.time()
                             lis_scores = listener(img, lang, lang_length, average=True)
@@ -545,14 +554,15 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
     else:
         metrics = compute_average_metrics(meters)
     if model_type == 'amortized':
-        seq = []
+        '''seq = []
         for word_index in lang[0,:].cpu().detach().numpy():
+            word_index = word_index.argmax(0)
             try:
                 seq.append(vocab['i2w'][word_index])
             except:
                 seq.append('<UNK>')
         if debug:
-            print('Generated utterance: '+' '.join(seq))
+            print('Generated utterance: '+' '.join(seq))'''
         seq = []
         for word_index in gt_lang[0,:].cpu().detach().numpy():
             try:
