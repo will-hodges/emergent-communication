@@ -58,10 +58,11 @@ if __name__ == '__main__':
     parser.add_argument('--sl0', action='store_true', help='Train literal speaker')
     parser.add_argument('--amortized', action='store_true', help='Train amortized speaker')
     parser.add_argument('--activation', default=None)
+    parser.add_argument('--early_stop', default='val_acc', help='Which metrics to use for early stopping')
     parser.add_argument('--penalty', default=None, help='Cost function (length)')
     parser.add_argument('--lmbd', default=0.01, help='Cost function parameter')
     parser.add_argument('--tau', default=1, type=float, help='Softmax temperature')
-    parser.add_argument('--save', default='metrics.csv', help='Where to save metrics')
+    parser.add_argument('--save', default='outputs/metrics.csv', help='Where to save metrics')
     parser.add_argument('--debug', action='store_true', help='Print metrics on every epoch')
     parser.add_argument('--save_imgs', action='store_true', help='Save one reference game per batch')
     parser.add_argument('--generalization', default=None)
@@ -99,6 +100,9 @@ if __name__ == '__main__':
         val_data = [data_dir + str(e) + '.npz' for e in range(15,30)]
     else:
         raise Exception('Dataset '+args.dataset+' is not defined.')
+        
+    if args.early_stop not in ['val_acc', 'val_lang_acc', 'train_acc', 'train_lang_acc', 'train_loss', 'val_loss']:
+        raise Exception('Metrics ' + args.early_stop + ' is not defined.')
         
     # Load or Generate Vocab
     if args.vocab:
@@ -236,65 +240,10 @@ if __name__ == '__main__':
     if args.sl0:
         for epoch in range(args.epochs):
             # Train one epoch
-            train_metrics, _ = run(train_data, 'train', 'sl0', speaker, literal_listener, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
+            train_metrics, train_outputs = run(train_data, 'train', 'sl0', speaker, literal_listener, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
             
             # Validate
-            val_metrics, _ = run(val_data, 'val', 'sl0', speaker, literal_listener_val, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
-            
-            # Update metrics, prepending the split name
-            for metric, value in train_metrics.items():
-                metrics['train_{}'.format(metric)].append(value)
-            for metric, value in val_metrics.items():
-                metrics['val_{}'.format(metric)].append(value)
-            metrics['current_epoch'] = epoch
-
-            # Use validation accuracy to choose the best model
-            # THIS SHOULD BE val_metrics! Setting to train_metrics 
-            # Overfits to the training data
-            is_best = train_metrics['acc'] > metrics['best_acc']
-            if is_best:
-                metrics['best_acc'] = train_metrics['acc']
-                metrics['best_loss'] = train_metrics['loss']
-                metrics['best_epoch'] = epoch
-                best_speaker = copy.deepcopy(speaker)
-
-            if args.debug:
-                print(metrics)
-                
-            ''' # Early stopping
-            if (len(last_five) == 5):
-                last_five.pop(0)
-                last_five.append(round(val_metrics['acc'], 2))
-            else:
-                last_five.append(round(val_metrics['acc'], 2))
-            
-            if round(val_metrics['acc'], 2) == 1.0:
-                break
-            
-            if len(last_five) == 5:
-                if (last_five == sorted(last_five, reverse=True)):
-                    # If not decreasing for last five
-                    break'''
-
-            # Store metrics
-            metrics_last = {k: v[-1] if isinstance(v, list) else v
-                            for k, v in metrics.items()}
-            all_metrics.append(metrics_last)
-            pd.DataFrame(all_metrics).to_csv(args.save, index=False)
-        # Save the best model
-        if args.generalization:
-            torch.save(best_speaker, './models/' + args.datset + '/'+args.generalization+'_actual_literal_speaker.pt')
-        else:
-            torch.save(best_speaker, './models/'+args.dataset+'/actual_literal_speaker.pt')
-
-    # Train Contextual Speaker
-    if args.s0:
-        for epoch in range(args.epochs):
-            # Train one epoch
-            train_metrics, _ = run(train_data, 'train', 's0', speaker, literal_listener, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs)
-            
-            # Validate
-            val_metrics, _ = run(val_data, 'val', 's0', speaker, literal_listener_val, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs)
+            val_metrics, val_outputs = run(val_data, 'val', 'sl0', speaker, literal_listener_val, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
             
             # Update metrics, prepending the split name
             for metric, value in train_metrics.items():
@@ -310,24 +259,83 @@ if __name__ == '__main__':
                 metrics['best_loss'] = val_metrics['loss']
                 metrics['best_epoch'] = epoch
                 best_speaker = copy.deepcopy(speaker)
-
-            if args.debug:
-                print(metrics)
                 
-            '''# Early stopping
-            if (len(last_five) == 5):
-                last_five.pop(0)
-                last_five.append(round(val_metrics['acc'], 2))
-            else:
-                last_five.append(round(val_metrics['acc'], 2))
+                
+            # Default is val_acc
+            if len(metrics[args.early_stop]) >= 5:
+                last_five = metrics[args.early_stop][-5:]
+                if last_five == sorted(last_five, reverse=True):
+                    break
             
             if round(val_metrics['acc'], 2) == 1.0:
                 break
             
-            if len(last_five) == 5:
-                if (last_five == sorted(last_five, reverse=True)):
-                    # If not decreasing for last five
-                    break'''
+            # Store metrics
+            metrics_last = {k: v[-1] if isinstance(v, list) else v
+                            for k, v in metrics.items()}
+            all_metrics.append(metrics_last)
+            pd.DataFrame(all_metrics).to_csv(args.save, index=False)
+            
+        # Save the best model, output graphs
+        figure = 1
+        for metric in ['loss', 'acc', 'lang_acc']:
+            y = metrics[f'train_{metric}']
+            k = metrics[f'val_{metric}']
+            x = [z for z in range(0, len(y))]
+            plt.figure(figure)
+            figure += 1
+            plt.plot(x, y, color='b',label=f'train {metric}')
+            plt.plot(x, k, color='g', label=f'val {metric}')
+            plt.legend(loc='upper right') 
+            plt.title(f'Train, Val {metric} Over Time')
+            plt.xlabel("epoch")
+            plt.ylabel(metric)
+            plt.savefig(f'{args.save[:-4]}_{metric}.png')
+
+        if args.generalization:
+            torch.save(best_speaker, './models/' + args.datset + '/'+args.generalization+'_actual_literal_speaker.pt')
+        else:
+            torch.save(best_speaker, './models/'+args.dataset+'/actual_literal_speaker.pt')
+
+    # Train Contextual Speaker
+    if args.s0:
+        for epoch in range(args.epochs):
+            # Train one epoch
+            train_metrics, train_outputs = run(train_data, 'train', 's0', speaker, literal_listener, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
+            
+            # Validate
+            val_metrics, val_outputs = run(val_data, 'val', 's0', speaker, literal_listener_val, optimizer, loss, vocab, args.batch_size, args.cuda, lmbd = args.lmbd, debug = args.debug, save_imgs = args.save_imgs, dataset=args.dataset)
+            
+            # Update metrics, prepending the split name
+            for metric, value in train_metrics.items():
+                metrics['train_{}'.format(metric)].append(value)
+            for metric, value in val_metrics.items():
+                metrics['val_{}'.format(metric)].append(value)
+            metrics['current_epoch'] = epoch
+            
+
+            # Use validation accuracy to choose the best model
+            is_best = val_metrics['acc'] > metrics['best_acc']
+            if is_best:
+                metrics['best_acc'] = val_metrics['acc']
+                metrics['best_loss'] = val_metrics['loss']
+                metrics['best_epoch'] = epoch
+                best_speaker = copy.deepcopy(speaker)
+
+            if args.debug:
+                print(train_outputs)
+                
+                
+            # Default is val_acc
+            if len(metrics[args.early_stop]) >= 5:
+                last_five = metrics[args.early_stop][-5:]
+                if last_five == sorted(last_five, reverse=True):
+                    break
+                
+            
+            if round(val_metrics['acc'], 2) == 1.0:
+                break
+            
 
             # Store metrics
             metrics_last = {k: v[-1] if isinstance(v, list) else v
@@ -336,6 +344,7 @@ if __name__ == '__main__':
             pd.DataFrame(all_metrics).to_csv(args.save, index=False)
 
         # Save the best model
+        print(metrics)
         if args.generalization:
             torch.save(best_speaker, './models/' + args.datset + '/'+args.generalization+'_literal_speaker.pt')
         else:

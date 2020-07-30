@@ -178,15 +178,14 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
         meters = {m: util.AverageMeter() for m in measures}
 
     with context:
-        # FIXME TODO - limited data_file (should be for file in data_file)
-        for file in [data_file[0]]:
+        for file in data_file:
             d = data.load_raw_data(file)
-            # FIXME TODO - limited dataset
+            '''# FIXME TODO - limited dataset
             d = {
-                'imgs': d['imgs'][:50],
-                'labels': d['labels'][:50],
-                'langs': d['langs'][:50]
-            }
+                'imgs': d['imgs'][:20],
+                'labels': d['labels'][:20],
+                'langs': d['langs'][:20]
+            }'''
             if split == 'test':
                 dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
             else:
@@ -358,9 +357,21 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     if dataset != 'shapeglot':
                         pred_text = dataloader.dataset.to_text(sampled_lang.argmax(2))[0] # Human readable
                         actual_text = dataloader.dataset.to_text(lang.argmax(2))[0]
+                        try:
+                            pred_text = pred_text[:pred_text.index('<END>') + 5] # Removes the padding
+                            actual_text = actual_text[:actual_text.index('<END>') + 5]
+                        except:
+                            pass
                     else:
                         pred_text = dataloader.dataset.gettext(sampled_lang.argmax(2))[0]
                         actual_text = dataloader.dataset.gettext(lang.argmax(2))[0]
+                        try:
+                            pred_text = pred_text[:pred_text.index('<END>') + 5] # Removes the padding
+                            actual_text = actual_text[:actual_text.index('<END>') + 5]
+                        except:
+                            pass
+                        
+                    outputs['lang'].append(pred_text)
                     
                     lang_out = lang_out[:, :-1].contiguous()
                     lang = lang[:, 1:].contiguous()
@@ -388,17 +399,17 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         optimizer.step()
                         
                     lang_acc = (lang_out.argmax(1)==lang.argmax(1)).float().mean().item()
-                    if debug:
-                        '''print(f'true language: {actual_text}')
+                    '''if debug:
+                        print(f'true language: {actual_text}')
                         print(f'sampled language: {pred_text}')
                         print(f'lis_pred (sampled lang): {lis_pred}')
                         print(f'lis_pred (ground truth lang): {lis_pred_0}')
                         print(f'target: {y}')
                         print(f'acc (sampled lang): {this_acc}')
                         print(f'lang_out.argmax(1): {lang_out.argmax(1)}')
-                        print(f'lang.argmax(1): {lang.argmax(1)}')'''
+                        print(f'lang.argmax(1): {lang.argmax(1)}')
                         print(f'lang_acc: {lang_acc}')
-                        print('----------')
+                        print('----------')'''
                     
                     meters['loss'].update(this_loss, batch_size)
                     meters['acc'].update(this_acc, batch_size)
@@ -498,6 +509,12 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                             else:
                                 this_loss = loss(lis_scores,y.long())
                             this_loss = this_loss + eos_loss * float(lmbd)
+                            
+                            pred_text = dataloader.dataset.gettext(lang.argmax(2))[0]
+                            try:
+                                pred_text = pred_text[:pred_text.index('<END>') + 5] # Removes the padding
+                            except:
+                                pass
                         else:
                             this_loss = loss(lis_scores, y.long())
                             

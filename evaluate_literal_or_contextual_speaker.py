@@ -45,7 +45,6 @@ def evaluate(sl0, l0, data_file, vocab, batch_size, cuda, dataset, debug=False):
             #lang_out = sl0(img, lang, length, y)
             lang_out, lang_out_length = sl0.sample(img, y, greedy=True)
             
-            print(lang_out.shape)
             
             if dataset != 'shapeglot':
                 pred_text = dataloader.dataset.to_text(lang_out.argmax(2))[0] # Human readable
@@ -90,8 +89,9 @@ if __name__ == '__main__':
     parser.add_argument('--sl0', default='models/shapeglot/actual_literal_speaker.pt', help='path to literal speaker')
     parser.add_argument('--l0', default='models/shapeglot/pretrained_listener_0.pt', help='path to literal listener')
     parser.add_argument('--dataset', default='shapeglot', help='chairs, colors, shapeglot, or shapeworld')
+    parser.add_argument('--split', default='test', help='train, test, val')
     parser.add_argument('--plot_title', default='S0', help='title for plot')
-    parser.add_argument('--save', default='literal_speaker_accuracy.png', help='path to savefile')
+    parser.add_argument('--save', default='outputs/literal_speaker_accuracy.png', help='path to savefile')
     parser.add_argument('--cuda', action='store_true', help='run with cuda')
     parser.add_argument('--debug', action='store_true', help='print output')
     parser.add_argument('--batch_size', default=32, type=int)
@@ -136,7 +136,12 @@ if __name__ == '__main__':
         x.append(epoch)
         epoch += 1
         
-    plt.bar(x,y)
+    a = plt.subplot(111)
+    literal_speaker = a.bar([b-0.2 for b in x], y, width=0.2, color='b', align='center', label='S0')
+    contextual_speaker = a.bar(x, z, width=0.2, color='g', align='center', label='S\'0')
+    literal_listener = a.bar([b+0.2 for b in x], k, width=0.2, color='r', align='center', label='L0')
+    
+    a.legend((literal_speaker[0], contextual_speaker[0], literal_listener[0]),('S0','S\'0','L0')) 
     plt.title(args.plot_title)
     plt.xlabel("split")
     plt.ylabel("accuracy")
