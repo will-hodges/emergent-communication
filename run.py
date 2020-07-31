@@ -180,12 +180,12 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
     with context:
         for file in data_file:
             d = data.load_raw_data(file)
-            '''# FIXME TODO - limited dataset
+            # FIXME TODO - limited dataset
             d = {
                 'imgs': d['imgs'][:20],
                 'labels': d['labels'][:20],
                 'langs': d['langs'][:20]
-            }'''
+            }
             if split == 'test':
                 dataloader = DataLoader(ShapeWorld(d, vocab), batch_size=batch_size, shuffle=False)
             else:
@@ -472,11 +472,20 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                                     seq.append(vocab['i2w'][word_index])
                                 except:
                                     seq.append('<UNK>')
-                            if debug:
-                                print('Generated utterance: '+' '.join(seq))
+                            #if debug:
+                                #print('Generated utterance: '+' '.join(seq))
                         elif split == 'train' and model_type == 'amortized' and activation != 'gumbel' and activation != None:
                             end = time.time()
                             lis_scores = listener(img, lang, lang_length, average=True)
+                            seq = []
+                            for word_index in lang[0,:].cpu().detach().numpy():
+                                word_index = word_index.argmax(0)
+                                try:
+                                    seq.append(vocab['i2w'][word_index])
+                                except:
+                                    seq.append('<UNK>')
+                            #if debug:
+                                #print('Generated utterance: '+' '.join(seq))
                         else:
                             lang_onehot = lang.argmax(2)
                             if activation != 'gumbel' and activation != None:
@@ -487,6 +496,15 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                             lang_length = torch.tensor(lang_length).cuda()
                             end = time.time()
                             lis_scores = listener(img, lang, lang_length)
+                            seq = []
+                            for word_index in lang[0,:].cpu().detach().numpy():
+                                word_index = word_index.argmax(0)
+                                try:
+                                    seq.append(vocab['i2w'][word_index])
+                                except:
+                                    seq.append('<UNK>')
+                            #if debug:
+                                #print('Generated utterance: '+' '.join(seq))
                             
                         # Evaluate loss and accuracy
                         if model_type == 'l0':
@@ -524,6 +542,9 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                                 pred_text = pred_text[:pred_text.index('<END>') + 5] # Removes the padding
                             except:
                                 pass
+                            if debug:
+                                print(pred_text)
+                                print(pred_text.count(' ') + 1)
                         else:
                             this_loss = loss(lis_scores, y.long())
                             
