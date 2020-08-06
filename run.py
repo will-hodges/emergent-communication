@@ -537,6 +537,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                                 this_loss = loss(lis_scores,y.long())
                             this_loss = this_loss + eos_loss * float(lmbd)
                             
+                            
                             pred_text = dataloader.dataset.gettext(lang.argmax(2))[0]
                             try:
                                 pred_text = pred_text[:pred_text.index('<END>') + 5] # Removes the padding
@@ -544,7 +545,6 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                                 pass
                             if debug:
                                 print(pred_text)
-                                print(pred_text.count(' ') + 1)
                         else:
                             this_loss = loss(lis_scores, y.long())
                             
