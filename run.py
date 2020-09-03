@@ -213,6 +213,7 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                     concat_img.paste(image2, (image1.width - 3, 0))
                     concat_img.paste(image3, (image1.width + image2.width - 6, 0))
                 
+                '''then = datetime.now()'''
                 gt_lang = lang
                 if split == 'test':
                     outputs['gt_lang'].append(gt_lang)
@@ -226,6 +227,8 @@ def run(data_file, split, model_type, speaker, listener, optimizer, loss, vocab,
                         for L in range(lang.shape[1]):
                             if lang[B][L].sum() == 0:
                                 lang[B][L][0] = 1
+                '''now = datetime.now()
+                print(f'217-229: {now - then}')'''
                                 
                 if cuda:
                     img = img.cuda()

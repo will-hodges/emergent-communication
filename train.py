@@ -90,7 +90,7 @@ if __name__ == '__main__':
         data_dir = './data/shapeglot/data_1000_'
         pt = np.array(glob(os.path.join(f'data/shapeglot/*_train_*.npz')))[:-2]
         pretrain_data = np.reshape(pt[:30], (3,int(len(pt[:30])/3))).tolist()
-        train_data = glob(os.path.join(f'data/shapeglot/*_test_*.npz'))
+        train_data = pt[0:int(len(pt)/3)]
         val_data = glob(os.path.join(f'data/shapeglot/*_val_*.npz'))
         
     elif args.dataset == 'colors':
