@@ -1,0 +1,2 @@
+<START> no leg support , back not solid , <END> 
+ Target: 1, Guess: 0

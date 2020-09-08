@@ -1,0 +1,2 @@
+<START> it has solid arms , but there is a small hole near the top <END> 
+ Target: 0, Guess: 1

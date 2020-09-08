@@ -1,0 +1,2 @@
+<START> chair with no back rests and lean solid back <END> 
+ Target: 0, Guess: 0

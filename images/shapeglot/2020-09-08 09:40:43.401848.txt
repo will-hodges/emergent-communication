@@ -1,0 +1,2 @@
+<START> porch chair with slats <END> 
+ Target: 1, Guess: 2

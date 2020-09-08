@@ -1,0 +1,2 @@
+<START> we are almost done < <UNK> > yeah < <UNK> > whooo hoo < <UNK> > simple design with short legs <END> 
+ Target: 1, Guess: 0

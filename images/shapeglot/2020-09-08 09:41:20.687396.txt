@@ -1,0 +1,2 @@
+<START> chair with back with no holes , and all legs the same size <END> 
+ Target: 2, Guess: 2

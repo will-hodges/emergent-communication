@@ -1,0 +1,2 @@
+<START> this chair has the most padding and has rounded wide er arms <END> 
+ Target: 0, Guess: 2

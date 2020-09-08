@@ -1,0 +1,2 @@
+<START> no hole in back skinny leg <END> 
+ Target: 2, Guess: 0

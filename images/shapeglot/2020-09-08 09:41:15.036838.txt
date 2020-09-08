@@ -1,0 +1,2 @@
+<START> this chair has legs that do not bend at an angle <END> 
+ Target: 2, Guess: 0

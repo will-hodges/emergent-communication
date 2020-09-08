@@ -1,0 +1,2 @@
+<START> this chair half a back in the shape of a half circle < <UNK> > we rock <END> 
+ Target: 0, Guess: 0

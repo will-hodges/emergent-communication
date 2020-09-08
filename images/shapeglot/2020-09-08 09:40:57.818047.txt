@@ -1,0 +1,2 @@
+<START> has arm rest <END> 
+ Target: 2, Guess: 1
